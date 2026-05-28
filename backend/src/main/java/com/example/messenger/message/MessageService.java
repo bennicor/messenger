@@ -82,6 +82,72 @@ public class MessageService {
 
         return MessageResponse.fromEntity(savedMessage);
     }
+    
+    @Transactional
+    public MessageResponse updateMessage(
+            UUID chatId,
+            UUID messageId,
+            UUID currentUserId,
+            UpdateMessageRequest request
+    ) {
+        ensureUserIsChatMember(chatId, currentUserId);
+
+        MessageEntity message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new IllegalArgumentException("Message not found"));
+
+        if (!message.getChat().getId().equals(chatId)) {
+            throw new IllegalArgumentException("Message not found");
+        }
+
+        if (message.getDeletedAt() != null) {
+            throw new IllegalArgumentException("Message is deleted");
+        }
+
+        if (message.getSender() == null || !message.getSender().getId().equals(currentUserId)) {
+            throw new IllegalArgumentException("You can edit only your own messages");
+        }
+
+        message.markEdited(request.content().trim());
+
+        MessageEntity savedMessage = messageRepository.save(message);
+
+        return MessageResponse.fromEntity(savedMessage);
+    }
+
+    @Transactional
+    public MessageResponse deleteMessage(
+            UUID chatId,
+            UUID messageId,
+            UUID currentUserId
+    ) {
+        ensureUserIsChatMember(chatId, currentUserId);
+
+        MessageEntity message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new IllegalArgumentException("Message not found"));
+
+        if (!message.getChat().getId().equals(chatId)) {
+            throw new IllegalArgumentException("Message not found");
+        }
+
+        if (message.getDeletedAt() != null) {
+            return MessageResponse.fromEntity(message);
+        }
+
+        if (message.getSender() == null || !message.getSender().getId().equals(currentUserId)) {
+            throw new IllegalArgumentException("You can delete only your own messages");
+        }
+
+        message.markDeleted();
+
+        MessageEntity savedMessage = messageRepository.save(message);
+
+        return MessageResponse.fromEntity(savedMessage);
+    }
+
+    @Transactional(readOnly = true)
+    public void ensureCanPublishTyping(UUID chatId, UUID currentUserId) {
+        ensureUserIsChatMember(chatId, currentUserId);
+    }
 
     private void ensureUserIsChatMember(UUID chatId, UUID userId) {
         boolean isMember = chatMemberRepository.existsByChatIdAndUserId(chatId, userId);

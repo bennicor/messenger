@@ -1,20 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { IMessage } from '@stomp/stompjs';
 import type { Client } from '@stomp/stompjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMe } from '@/features/auth/authApi';
 import { getUsers } from '@/features/auth/usersApi';
 import type { UserSummary } from '@/features/auth/authTypes';
+import { createRealtimeClient } from '@/features/chats/api/realtimeClient';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { useAuthStore } from '@/stores/authStore';
+
 import {
   createDirectChat,
   createMessage,
+  deleteMessage,
   getChats,
-  getMessages
+  getMessages,
+  updateMessage
 } from '@/features/chats/api/chatsApi';
-import { createRealtimeClient } from '@/features/chats/api/realtimeClient';
-import type { Chat, Message } from '@/features/chats/api/chatTypes';
-import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { useAuthStore } from '@/stores/authStore';
+
+import type {
+  Chat,
+  ChatMessageEvent,
+  Message,
+  TypingEvent
+} from '@/features/chats/api/chatTypes';
 
 export function ChatsPage() {
   const queryClient = useQueryClient();
@@ -31,12 +40,43 @@ export function ChatsPage() {
   const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
 
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const [typingUsersByChat, setTypingUsersByChat] = useState<Record<string, Record<string, string>>>({});
+
   const rawSearch = search.trim();
   const debouncedSearch = useDebouncedValue(search, 300).trim();
 
   const hasSearch = rawSearch.length > 0;
   const isDebounceSettled = rawSearch === debouncedSearch;
   const canShowSearchState = hasSearch && isDebounceSettled;
+
+  const applyMessageEvent = useCallback(
+    (event: ChatMessageEvent) => {
+      queryClient.setQueryData<Message[]>(
+        ['messages', event.message.chatId],
+        (oldMessages = []) => {
+          if (event.type === 'CREATED') {
+            const alreadyExists = oldMessages.some((message) => message.id === event.message.id);
+            return alreadyExists ? oldMessages : [...oldMessages, event.message];
+          }
+
+          if (event.type === 'UPDATED') {
+            return oldMessages.map((message) =>
+              message.id === event.message.id ? event.message : message
+            );
+          }
+
+          if (event.type === 'DELETED') {
+            return oldMessages.filter((message) => message.id !== event.message.id);
+          }
+
+          return oldMessages;
+        }
+      );
+    },
+    [queryClient]
+  );
 
   const meQuery = useQuery({
     queryKey: ['me'],
@@ -83,23 +123,49 @@ export function ChatsPage() {
     client.onConnect = () => {
       setIsRealtimeConnected(true);
 
-      client.subscribe(`/topic/chats/${selectedChatId}/messages`, (frame: IMessage) => {
-        const message = JSON.parse(frame.body) as Message;
-
-        queryClient.setQueryData<Message[]>(
-          ['messages', selectedChatId],
-          (oldMessages = []) => {
-            const alreadyExists = oldMessages.some((oldMessage) => oldMessage.id === message.id);
-
-            if (alreadyExists) {
-              return oldMessages;
-            }
-
-            return [...oldMessages, message];
-          }
-        );
-
+      client.subscribe(`/topic/chats/${selectedChatId}/messages/events`, (frame: IMessage) => {
+        const event = JSON.parse(frame.body) as ChatMessageEvent;
+        applyMessageEvent(event);
         void queryClient.invalidateQueries({ queryKey: ['chats'] });
+      });
+
+      client.subscribe(`/topic/chats/${selectedChatId}/typing`, (frame: IMessage) => {
+        const event = JSON.parse(frame.body) as TypingEvent;
+
+        if (event.userId === currentUser?.id) {
+          return;
+        }
+
+        setTypingUsersByChat((current) => {
+          const chatTypingUsers = current[event.chatId] ?? {};
+          const nextChatTypingUsers = { ...chatTypingUsers };
+
+          if (event.typing) {
+            nextChatTypingUsers[event.userId] = event.username;
+          } else {
+            delete nextChatTypingUsers[event.userId];
+          }
+
+          return {
+            ...current,
+            [event.chatId]: nextChatTypingUsers
+          };
+        });
+
+        if (event.typing) {
+          window.setTimeout(() => {
+            setTypingUsersByChat((current) => {
+              const chatTypingUsers = current[event.chatId] ?? {};
+              const nextChatTypingUsers = { ...chatTypingUsers };
+              delete nextChatTypingUsers[event.userId];
+
+              return {
+                ...current,
+                [event.chatId]: nextChatTypingUsers
+              };
+            });
+          }, 2500);
+        }
       });
     };
 
@@ -122,7 +188,7 @@ export function ChatsPage() {
       stompClientRef.current = null;
       void client.deactivate();
     };
-  }, [isAuthenticated, selectedChatId, queryClient]);
+  }, [isAuthenticated, selectedChatId, queryClient, currentUser?.id, applyMessageEvent]);
 
   const createDirectChatMutation = useMutation({
     mutationFn: createDirectChat,
@@ -163,6 +229,43 @@ export function ChatsPage() {
     }
   });
 
+  const updateMessageMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedChatId || !editingMessageId) {
+        throw new Error('Message is not selected');
+      }
+
+      return updateMessage(selectedChatId, editingMessageId, {
+        content: editingText.trim()
+      });
+    },
+    onSuccess: (message) => {
+      applyMessageEvent({
+        type: 'UPDATED',
+        message
+      });
+
+      setEditingMessageId(null);
+      setEditingText('');
+    }
+  });
+
+  const deleteMessageMutation = useMutation({
+    mutationFn: async (messageId: string) => {
+      if (!selectedChatId) {
+        throw new Error('Chat is not selected');
+      }
+
+      return deleteMessage(selectedChatId, messageId);
+    },
+    onSuccess: (message) => {
+      applyMessageEvent({
+        type: 'DELETED',
+        message
+      });
+    }
+  });
+
   useEffect(() => {
     if (meQuery.data) {
       setUser(meQuery.data);
@@ -188,6 +291,10 @@ export function ChatsPage() {
   const chats = chatsQuery.data ?? [];
   const selectedChat = chats.find((chat) => chat.id === selectedChatId) ?? null;
   const messages = messagesQuery.data ?? [];
+
+  const typingUsers = selectedChatId
+  ? Object.values(typingUsersByChat[selectedChatId] ?? {})
+  : [];
 
   const messageText = selectedChatId ? messageDrafts[selectedChatId] ?? '' : '';
 
@@ -246,6 +353,8 @@ export function ChatsPage() {
       ...currentDrafts,
       [selectedChatId]: value
     }));
+
+    publishTyping(value.trim().length > 0);
   }
 
   function clearCurrentMessageText() {
@@ -258,6 +367,43 @@ export function ChatsPage() {
       delete nextDrafts[selectedChatId];
       return nextDrafts;
     });
+
+    publishTyping(false);
+  }
+
+  function publishTyping(typing: boolean) {
+    if (!selectedChatId) {
+      return;
+    }
+
+    const client = stompClientRef.current;
+
+    if (!client?.connected) {
+      return;
+    }
+
+    client.publish({
+      destination: `/app/chats/${selectedChatId}/typing`,
+      body: JSON.stringify({ typing })
+    });
+  }
+
+  function startEditingMessage(message: Message) {
+    setEditingMessageId(message.id);
+    setEditingText(message.content);
+  }
+
+  async function submitMessageEdit() {
+    if (!editingText.trim() || updateMessageMutation.isPending) {
+      return;
+    }
+
+    await updateMessageMutation.mutateAsync();
+  }
+
+  function cancelMessageEdit() {
+    setEditingMessageId(null);
+    setEditingText('');
   }
 
   async function handleMessageSubmit() {
@@ -436,14 +582,63 @@ export function ChatsPage() {
                           hour: '2-digit',
                           minute: '2-digit'
                         }).format(new Date(message.createdAt))}
+                        {message.editedAt ? ' · изменено' : ''}
                       </span>
                     </div>
 
-                    <p>{message.content}</p>
+                    {editingMessageId === message.id ? (
+                      <form
+                        className="edit-message-form"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void submitMessageEdit();
+                        }}
+                      >
+                        <input
+                          value={editingText}
+                          onChange={(event) => setEditingText(event.target.value)}
+                          autoFocus
+                        />
+
+                        <div className="message-actions">
+                          <button type="submit" disabled={!editingText.trim() || updateMessageMutation.isPending}>
+                            Сохранить
+                          </button>
+                          <button type="button" onClick={cancelMessageEdit}>
+                            Отмена
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <p>{message.content}</p>
+
+                        {isOwn ? (
+                          <div className="message-actions">
+                            <button type="button" onClick={() => startEditingMessage(message)}>
+                              Изменить
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deleteMessageMutation.isPending}
+                              onClick={() => deleteMessageMutation.mutate(message.id)}
+                            >
+                              Удалить
+                            </button>
+                          </div>
+                        ) : null}
+                      </>
+                    )}
                   </article>
                 );
               })}
 
+              {typingUsers.length > 0 ? (
+                <p className="typing-indicator">
+                  {typingUsers.join(', ')} печатает...
+                </p>
+              ) : null}
+              
               <div ref={messagesEndRef} />
             </div>
 

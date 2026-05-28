@@ -10,6 +10,14 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -147,12 +155,16 @@ button:disabled {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 360px 1fr;
 }
 
 .sidebar {
+  min-height: 0;
+  overflow-y: auto;
   border-right: 1px solid rgba(148, 163, 184, 0.18);
   padding: 1.25rem;
   background: rgba(15, 23, 42, 0.74);
@@ -330,8 +342,10 @@ button:disabled {
 }
 
 .chat-workspace {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
   min-width: 0;
-  min-height: 100vh;
   display: grid;
   grid-template-rows: auto 1fr auto;
   background:
@@ -459,4 +473,86 @@ button:disabled {
 
 .connection-status.online {
   color: #86efac;
+}
+
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.message-actions button {
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: #e5e7eb;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.edit-message-form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.edit-message-form input {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  color: #e5e7eb;
+  background: rgba(2, 6, 23, 0.55);
+  outline: none;
+}
+
+.typing-indicator {
+  margin: 0.25rem 0;
+  color: #93c5fd;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+/* Кастомная прокрутка */
+.sidebar,
+.messages-panel {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(147, 197, 253, 0.65) rgba(15, 23, 42, 0.35);
+}
+
+/* Chrome, Edge, Safari */
+.sidebar::-webkit-scrollbar,
+.messages-panel::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.sidebar::-webkit-scrollbar-track,
+.messages-panel::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.35);
+  border-radius: 999px;
+}
+
+.sidebar::-webkit-scrollbar-thumb,
+.messages-panel::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(191, 219, 254, 0.9),
+    rgba(96, 165, 250, 0.85)
+  );
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.35);
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover,
+.messages-panel::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(219, 234, 254, 0.98),
+    rgba(59, 130, 246, 0.95)
+  );
+}
+
+.sidebar::-webkit-scrollbar-corner,
+.messages-panel::-webkit-scrollbar-corner {
+  background: transparent;
 }

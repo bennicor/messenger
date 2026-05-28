@@ -40,3 +40,21 @@ export type Message = {
 export type CreateMessageRequest = {
   content: string;
 };
+
+export type UpdateMessageRequest = {
+  content: string;
+};
+
+export type ChatMessageEventType = 'CREATED' | 'UPDATED' | 'DELETED';
+
+export type ChatMessageEvent = {
+  type: ChatMessageEventType;
+  message: Message;
+};
+
+export type TypingEvent = {
+  chatId: string;
+  userId: string;
+  username: string;
+  typing: boolean;
+};

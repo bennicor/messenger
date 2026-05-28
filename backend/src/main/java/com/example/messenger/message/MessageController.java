@@ -48,4 +48,40 @@ public class MessageController {
 
         return message;
     }
+
+    @PatchMapping("/{messageId}")
+    public MessageResponse updateMessage(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID chatId,
+            @PathVariable UUID messageId,
+            @Valid @RequestBody UpdateMessageRequest request
+    ) {
+        MessageResponse message = messageService.updateMessage(
+                chatId,
+                messageId,
+                principal.getId(),
+                request
+        );
+
+        messageEventPublisher.publishMessageUpdated(chatId, message);
+
+        return message;
+    }
+
+    @DeleteMapping("/{messageId}")
+    public MessageResponse deleteMessage(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID chatId,
+            @PathVariable UUID messageId
+    ) {
+        MessageResponse message = messageService.deleteMessage(
+                chatId,
+                messageId,
+                principal.getId()
+        );
+
+        messageEventPublisher.publishMessageDeleted(chatId, message);
+
+        return message;
+    }
 }
