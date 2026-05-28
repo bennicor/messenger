@@ -17,14 +17,20 @@ export async function createDirectChat(request: CreateDirectChatRequest): Promis
   return response.data;
 }
 
+export type GetMessagesParams = {
+  before?: string;
+  after?: string;
+  around?: string;
+};
+
 export async function getMessages(
   chatId: string,
-  before?: string
+  params: GetMessagesParams = {}
 ): Promise<Message[]> {
   const response = await http.get<Message[]>(`/chats/${chatId}/messages`, {
     params: {
       limit: 30,
-      before
+      ...params
     }
   });
 

@@ -31,14 +31,18 @@ public class MessageController {
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable UUID chatId,
             @RequestParam(defaultValue = "30") int limit,
-            @RequestParam(required = false) Instant before
+            @RequestParam(required = false) Instant before,
+            @RequestParam(required = false) Instant after,
+            @RequestParam(required = false) UUID around
     ) {
-    return messageService.getMessages(
-            chatId,
-            principal.getId(),
-            limit,
-            before
-    );
+        return messageService.getMessages(
+                chatId,
+                principal.getId(),
+                limit,
+                before,
+                after,
+                around
+        );
     }
 
     @PostMapping

@@ -154,12 +154,34 @@ public class ChatService {
                         lastReadAt
                 );
 
+        UUID firstUnreadMessageId = null;
+
+        if (unreadCount > 0) {
+            firstUnreadMessageId = lastReadAt == null
+                    ? messageRepository
+                            .findFirstByChatIdAndDeletedAtIsNullAndSenderIdNotOrderByCreatedAtAsc(
+                                    chat.getId(),
+                                    currentUserId
+                            )
+                            .map(MessageEntity::getId)
+                            .orElse(null)
+                    : messageRepository
+                            .findFirstByChatIdAndDeletedAtIsNullAndSenderIdNotAndCreatedAtAfterOrderByCreatedAtAsc(
+                                    chat.getId(),
+                                    currentUserId,
+                                    lastReadAt
+                            )
+                            .map(MessageEntity::getId)
+                            .orElse(null);
+        }
+
         return new ChatResponse(
                 chat.getId(),
                 chat.getType(),
                 chat.getTitle(),
                 members,
                 lastMessage,
+                firstUnreadMessageId,
                 unreadCount,
                 chat.getCreatedAt(),
                 chat.getUpdatedAt()

@@ -43,11 +43,17 @@ public class MessageService {
             UUID chatId,
             UUID currentUserId,
             int limit,
-            Instant before
+            Instant before,
+            Instant after,
+            UUID around
     ) {
         ensureUserIsChatMember(chatId, currentUserId);
 
         int safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
+
+        if (around != null) {
+            return getMessagesAround(chatId, around, safeLimit);
+        }
 
         PageRequest pageRequest = PageRequest.of(
                 0,
@@ -55,16 +61,8 @@ public class MessageService {
                 Sort.by(Sort.Direction.DESC, "createdAt")
         );
 
-        List<MessageResponse> messages;
-
-        if (before == null) {
-            messages = messageRepository
-                    .findAllByChatIdAndDeletedAtIsNullOrderByCreatedAtDesc(chatId, pageRequest)
-                    .stream()
-                    .map(MessageResponse::fromEntity)
-                    .toList();
-        } else {
-            messages = messageRepository
+        if (before != null) {
+            List<MessageResponse> messages = messageRepository
                     .findAllByChatIdAndDeletedAtIsNullAndCreatedAtBeforeOrderByCreatedAtDesc(
                             chatId,
                             before,
@@ -73,9 +71,73 @@ public class MessageService {
                     .stream()
                     .map(MessageResponse::fromEntity)
                     .toList();
+
+            return reversed(messages);
         }
 
-        return reversed(messages);
+        if (after != null) {
+            PageRequest afterPageRequest = PageRequest.of(
+                    0,
+                    safeLimit,
+                    Sort.by(Sort.Direction.ASC, "createdAt")
+            );
+
+            return messageRepository
+                    .findAllByChatIdAndDeletedAtIsNullAndCreatedAtAfterOrderByCreatedAtAsc(
+                            chatId,
+                            after,
+                            afterPageRequest
+                    )
+                    .stream()
+                    .map(MessageResponse::fromEntity)
+                    .toList();
+        }
+
+        return reversed(
+                messageRepository
+                        .findAllByChatIdAndDeletedAtIsNullOrderByCreatedAtDesc(chatId, pageRequest)
+                        .stream()
+                        .map(MessageResponse::fromEntity)
+                        .toList()
+        );
+    }
+
+    private List<MessageResponse> getMessagesAround(
+            UUID chatId,
+            UUID aroundMessageId,
+            int limit
+    ) {
+        MessageEntity target = messageRepository.findByIdAndChatIdAndDeletedAtIsNull(
+                aroundMessageId,
+                chatId
+        ).orElseThrow(() -> new IllegalArgumentException("Message not found"));
+
+        int beforeLimit = Math.max(10, limit / 3);
+        int afterLimit = Math.max(20, limit - beforeLimit);
+
+        List<MessageEntity> beforeOrAt = messageRepository.findMessagesBeforeOrAt(
+                chatId,
+                target.getCreatedAt(),
+                PageRequest.of(0, beforeLimit)
+        );
+
+        List<MessageEntity> after = messageRepository.findMessagesAfter(
+                chatId,
+                target.getCreatedAt(),
+                PageRequest.of(0, afterLimit)
+        );
+
+        List<MessageEntity> result = new java.util.ArrayList<>();
+
+        List<MessageEntity> beforeAscending = new java.util.ArrayList<>(beforeOrAt);
+        java.util.Collections.reverse(beforeAscending);
+
+        result.addAll(beforeAscending);
+        result.addAll(after);
+
+        return result.stream()
+                .map(MessageResponse::fromEntity)
+                .toList();
     }
 
     @Transactional

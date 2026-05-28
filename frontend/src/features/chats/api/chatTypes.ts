@@ -13,6 +13,7 @@ export type Chat = {
   title: string | null;
   members: ChatMember[];
   lastMessage: Message | null;
+  firstUnreadMessageId: string | null;
   unreadCount: number;
   createdAt: string;
   updatedAt: string;

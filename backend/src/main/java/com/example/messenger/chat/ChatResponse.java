@@ -12,6 +12,7 @@ public record ChatResponse(
         String title,
         List<ChatMemberResponse> members,
         MessageResponse lastMessage,
+        UUID firstUnreadMessageId,
         long unreadCount,
         Instant createdAt,
         Instant updatedAt

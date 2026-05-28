@@ -29,6 +29,13 @@ import {
   updateMessage
 } from '@/features/chats/api/chatsApi';
 
+type MessagesPageParam =
+  | { before: string }
+  | { after: string }
+  | { around: string }
+  | undefined;
+
+
 export function ChatsPage() {
   const queryClient = useQueryClient();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -40,10 +47,17 @@ export function ChatsPage() {
   const previousScrollHeightRef = useRef(0);
   const isLoadingOlderMessagesRef = useRef(false);
 
+  const firstUnreadTargetMessageIdRef = useRef<string | null>(null);
+  const shouldScrollToFirstUnreadRef = useRef(false);
+  const initialAroundMessageIdRef = useRef<string | null>(null);
+
+
   const logout = useAuthStore((state) => state.logout);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const currentUser = useAuthStore((state) => state.user);
   const setUser = useAuthStore((state) => state.setUser);
+
+  const [initialAroundMessageId, setInitialAroundMessageId] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
 
@@ -154,8 +168,10 @@ export function ChatsPage() {
 
   const applyMessageEvent = useCallback(
     (event: ChatMessageEvent) => {
-      queryClient.setQueryData<InfiniteData<Message[]>>(
-        ['messages', event.message.chatId],
+      queryClient.setQueriesData<InfiniteData<Message[]>>(
+        {
+          queryKey: ['messages', event.message.chatId]
+        },
         (oldData) => {
           if (event.type === 'CREATED') {
             return appendMessageToInfiniteData(oldData, event.message);
@@ -199,21 +215,45 @@ export function ChatsPage() {
     placeholderData: (previousData) => previousData
   });
 
-  const messagesQuery = useInfiniteQuery({
-    queryKey: ['messages', selectedChatId],
-    queryFn: ({ pageParam }) => getMessages(selectedChatId!, pageParam),
-    initialPageParam: undefined as string | undefined,
+  const messagesQueryKey = ['messages', selectedChatId, initialAroundMessageId] as const;
+
+  const messagesQuery = useInfiniteQuery<
+    Message[],
+    Error,
+    InfiniteData<Message[]>,
+    typeof messagesQueryKey,
+    MessagesPageParam
+  >({
+    queryKey: messagesQueryKey,
+    queryFn: ({ pageParam }) => {
+      if (!selectedChatId) {
+        return Promise.resolve([]);
+      }
+
+      return getMessages(selectedChatId, pageParam ?? {});
+    },
+    initialPageParam: initialAroundMessageId
+      ? { around: initialAroundMessageId }
+      : undefined,
 
     getPreviousPageParam: (firstPage) => {
       if (firstPage.length < 30) {
         return undefined;
       }
 
-      return firstPage[0]?.createdAt;
+      const firstMessage = firstPage[0];
+
+      return firstMessage ? { before: firstMessage.createdAt } : undefined;
     },
 
-    getNextPageParam: () => {
-      return undefined;
+    getNextPageParam: (lastPage) => {
+      if (!initialAroundMessageId || lastPage.length < 30) {
+        return undefined;
+      }
+
+      const lastMessage = lastPage.at(-1);
+
+      return lastMessage ? { after: lastMessage.createdAt } : undefined;
     },
 
     enabled: isAuthenticated && Boolean(selectedChatId),
@@ -231,6 +271,8 @@ export function ChatsPage() {
   const chats = chatsQuery.data ?? [];
   const selectedChat = chats.find((chat) => chat.id === selectedChatId) ?? null;
   const messages = messagesQuery.data?.pages.flat() ?? [];
+
+  const selectedChatUnreadCount = selectedChat?.unreadCount ?? 0;
 
   useEffect(() => {
     const accessToken = useAuthStore.getState().accessToken;
@@ -330,7 +372,7 @@ export function ChatsPage() {
   const createDirectChatMutation = useMutation({
     mutationFn: createDirectChat,
     onSuccess: async (chat) => {
-      selectChat(chat.id);
+      selectChat(chat);
       setSearch('');
       await queryClient.invalidateQueries({ queryKey: ['chats'] });
     }
@@ -339,12 +381,22 @@ export function ChatsPage() {
   const markChatAsReadMutation = useMutation({
     mutationFn: markChatAsRead,
     onSuccess: (updatedChat) => {
-      applyChatListEvent({
-        type: 'UPDATED',
-        chat: updatedChat
-      });
+      queryClient.setQueryData<Chat[]>(['chats'], (oldChats = []) =>
+        oldChats.map((chat) =>
+          chat.id === updatedChat.id ? updatedChat : chat
+        )
+      );
     }
   });
+
+  const { mutate: markChatAsReadMutate } = markChatAsReadMutation;
+
+  const markSelectedChatAsRead = useCallback(
+    (chatId: string) => {
+      markChatAsReadMutate(chatId);
+    },
+    [markChatAsReadMutate]
+  );
 
   const createMessageMutation = useMutation({
     mutationFn: async () => {
@@ -353,27 +405,18 @@ export function ChatsPage() {
       }
 
       return createMessage(selectedChatId, {
-        content: messageText.trim()
+        content: normalizedMessageText
       });
     },
-    onSuccess: async (message) => {
-      clearCurrentMessageText();
+    onSuccess: (message) => {
       shouldScrollToBottomRef.current = true;
 
-      queryClient.setQueryData<Message[]>(
-        ['messages', selectedChatId],
-        (oldMessages = []) => {
-          const alreadyExists = oldMessages.some((oldMessage) => oldMessage.id === message.id);
+      applyMessageEvent({
+        type: 'CREATED',
+        message
+      });
 
-          if (alreadyExists) {
-            return oldMessages;
-          }
-
-          return [...oldMessages, message];
-        }
-      );
-
-      await queryClient.invalidateQueries({ queryKey: ['chats'] });
+      clearCurrentMessageText();
     }
   });
 
@@ -442,7 +485,12 @@ export function ChatsPage() {
       : false;
 
     if (savedChatExists && selectedChatId !== savedChatId) {
-      setSelectedChatId(savedChatId);
+      const savedChat = chatsQuery.data.find((chat) => chat.id === savedChatId);
+
+      if (savedChat) {
+        selectChat(savedChat);
+      }
+
       return;
     }
 
@@ -451,7 +499,7 @@ export function ChatsPage() {
       : false;
 
     if (!selectedChatExists) {
-      setSelectedChatId(chatsQuery.data[0].id);
+      selectChat(chatsQuery.data[0]);
     }
   }, [chatsQuery.data, selectedChatId, meQuery.data]);
 
@@ -462,9 +510,38 @@ export function ChatsPage() {
       return;
     }
 
+    if (
+      shouldScrollToFirstUnreadRef.current &&
+      firstUnreadTargetMessageIdRef.current
+    ) {
+      const target = panel.querySelector<HTMLElement>(
+        `[data-message-id="${firstUnreadTargetMessageIdRef.current}"]`
+      );
+
+      if (target) {
+        const comfortableOffset = Math.round(panel.clientHeight * 0.28);
+
+        panel.scrollTop = Math.max(
+          target.offsetTop - comfortableOffset,
+          0
+        );
+
+        shouldScrollToFirstUnreadRef.current = false;
+        firstUnreadTargetMessageIdRef.current = null;
+        initialAroundMessageIdRef.current = null;
+
+        if (selectedChatId) {
+          markSelectedChatAsRead(selectedChatId);
+        }
+
+        return;
+      }
+    }
+
     if (isLoadingOlderMessagesRef.current) {
       const previousScrollHeight = previousScrollHeightRef.current;
       const newScrollHeight = panel.scrollHeight;
+
       panel.scrollTop = newScrollHeight - previousScrollHeight;
       isLoadingOlderMessagesRef.current = false;
       return;
@@ -474,32 +551,46 @@ export function ChatsPage() {
       panel.scrollTop = panel.scrollHeight;
       shouldScrollToBottomRef.current = false;
     }
-  }, [messages.length, selectedChatId]);
+  }, [messages.length, selectedChatId, markSelectedChatAsRead]);
 
   useEffect(() => {
     shouldScrollToBottomRef.current = true;
   }, [selectedChatId]);
-
-  const markSelectedChatAsRead = useCallback(
-    (chatId: string) => {
-      markChatAsReadMutation.mutate(chatId);
-    },
-    [markChatAsReadMutation]
-  );
 
   useEffect(() => {
     if (!selectedChatId || messages.length === 0) {
       return;
     }
 
-    const openedChat = chatsQuery.data?.find((chat) => chat.id === selectedChatId);
-
-    if (!openedChat || openedChat.unreadCount === 0) {
+    if (!selectedChat || selectedChat.unreadCount === 0) {
       return;
     }
 
-    markSelectedChatAsRead(selectedChatId);
-  }, [selectedChatId, messages.length, chatsQuery.data, markChatAsRead]);
+    if (
+      selectedChat.firstUnreadMessageId &&
+      shouldScrollToFirstUnreadRef.current
+    ) {
+      return;
+    }
+
+    const panel = messagesPanelRef.current;
+
+    if (!panel) {
+      return;
+    }
+
+    const distanceFromBottom =
+      panel.scrollHeight - panel.scrollTop - panel.clientHeight;
+
+    if (distanceFromBottom <= 80) {
+      markSelectedChatAsRead(selectedChatId);
+    }
+  }, [
+    selectedChatId,
+    messages.length,
+    selectedChat,
+    markSelectedChatAsRead
+  ]);
 
   useLayoutEffect(() => {
     const textarea = messageInputRef.current;
@@ -638,15 +729,31 @@ export function ChatsPage() {
     });
   }
 
-  function selectChat(chatId: string) {
-    setSelectedChatId(chatId);
+  const selectChat = useCallback(
+    (chat: Chat) => {
+      setSelectedChatId(chat.id);
 
-    const storageKey = currentUser
-      ? `messenger:selectedChatId:${currentUser.id}`
-      : 'messenger:selectedChatId:anonymous';
+      const storageKey = currentUser
+        ? `messenger:selectedChatId:${currentUser.id}`
+        : 'messenger:selectedChatId:anonymous';
 
-    localStorage.setItem(storageKey, chatId);
-  }
+      localStorage.setItem(storageKey, chat.id);
+
+      if (chat.unreadCount > 0 && chat.firstUnreadMessageId) {
+        setInitialAroundMessageId(chat.firstUnreadMessageId);
+        firstUnreadTargetMessageIdRef.current = chat.firstUnreadMessageId;
+        shouldScrollToFirstUnreadRef.current = true;
+        shouldScrollToBottomRef.current = false;
+        return;
+      }
+
+      setInitialAroundMessageId(null);
+      firstUnreadTargetMessageIdRef.current = null;
+      shouldScrollToFirstUnreadRef.current = false;
+      shouldScrollToBottomRef.current = true;
+    },
+    [currentUser]
+  );
 
   async function submitMessageEdit() {
     if (
@@ -790,7 +897,7 @@ export function ChatsPage() {
                 key={chat.id}
                 type="button"
                 className={chat.id === selectedChatId ? 'chat-card active' : 'chat-card'}
-                onClick={() => selectChat(chat.id)}
+                onClick={() => selectChat(chat)}
               >
                 <div className="avatar">
                   {getChatTitle(chat).slice(0, 1).toUpperCase()}
@@ -836,18 +943,38 @@ export function ChatsPage() {
               onScroll={() => {
                 const panel = messagesPanelRef.current;
 
-                if (
-                  !panel ||
-                  messagesQuery.isFetchingPreviousPage ||
-                  !messagesQuery.hasPreviousPage
-                ) {
+                if (!panel) {
                   return;
                 }
 
-                if (panel.scrollTop <= 80) {
+                const distanceFromBottom =
+                  panel.scrollHeight - panel.scrollTop - panel.clientHeight;
+
+                if (
+                  selectedChatId &&
+                  selectedChatUnreadCount > 0 &&
+                  distanceFromBottom <= 80
+                ) {
+                  markSelectedChatAsRead(selectedChatId);
+                }
+
+                if (
+                  panel.scrollTop <= 80 &&
+                  !messagesQuery.isFetchingPreviousPage &&
+                  messagesQuery.hasPreviousPage
+                ) {
                   previousScrollHeightRef.current = panel.scrollHeight;
                   isLoadingOlderMessagesRef.current = true;
                   void messagesQuery.fetchPreviousPage();
+                  return;
+                }
+
+                if (
+                  distanceFromBottom <= 80 &&
+                  !messagesQuery.isFetchingNextPage &&
+                  messagesQuery.hasNextPage
+                ) {
+                  void messagesQuery.fetchNextPage();
                 }
               }}
             >
@@ -872,13 +999,19 @@ export function ChatsPage() {
 
               {messages.map((message) => {
                 const isOwn = message.sender?.id === currentUser?.id;
+                const isFirstUnread = message.id === firstUnreadTargetMessageIdRef.current;
 
                 return (
-                  <article
-                    key={message.id}
-                    className={isOwn ? 'message-bubble own' : 'message-bubble'}
-                  >
-                    <div className="message-meta">
+                      <article
+                        key={message.id}
+                        data-message-id={message.id}
+                        className={[
+                          'message-bubble',
+                          isOwn ? 'own' : '',
+                          isFirstUnread ? 'first-unread' : ''
+                        ].filter(Boolean).join(' ')}
+                      >
+                        <div className="message-meta">
                       <strong>
                         {message.sender?.displayName ??
                           message.sender?.username ??
@@ -923,6 +1056,10 @@ export function ChatsPage() {
                 );
               })}
               
+              {messagesQuery.isFetchingNextPage ? (
+                <p className="older-messages-loader">Загружаем новые сообщения...</p>
+              ) : null}
+
               <div ref={messagesEndRef} />
             </div>
 
