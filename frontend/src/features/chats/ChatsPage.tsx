@@ -1,22 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMe } from '@/features/auth/authApi';
 import { getUsers } from '@/features/auth/usersApi';
 import type { UserSummary } from '@/features/auth/authTypes';
-import { createDirectChat, getChats } from '@/features/chats/api/chatsApi';
+import {
+  createDirectChat,
+  createMessage,
+  getChats,
+  getMessages
+} from '@/features/chats/api/chatsApi';
 import type { Chat } from '@/features/chats/api/chatTypes';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
 
 export function ChatsPage() {
   const queryClient = useQueryClient();
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const logout = useAuthStore((state) => state.logout);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const currentUser = useAuthStore((state) => state.user);
   const setUser = useAuthStore((state) => state.setUser);
 
   const [search, setSearch] = useState('');
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+  const [messageText, setMessageText] = useState('');
 
   const rawSearch = search.trim();
   const debouncedSearch = useDebouncedValue(search, 300).trim();
@@ -47,12 +55,38 @@ export function ChatsPage() {
     staleTime: 30_000
   });
 
+  const messagesQuery = useQuery({
+    queryKey: ['messages', selectedChatId],
+    queryFn: () => getMessages(selectedChatId!),
+    enabled: isAuthenticated && Boolean(selectedChatId),
+    retry: false
+  });
+
   const createDirectChatMutation = useMutation({
     mutationFn: createDirectChat,
     onSuccess: async (chat) => {
       setSelectedChatId(chat.id);
       setSearch('');
       await queryClient.invalidateQueries({ queryKey: ['chats'] });
+    }
+  });
+
+  const createMessageMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedChatId) {
+        throw new Error('Chat is not selected');
+      }
+
+      return createMessage(selectedChatId, {
+        content: messageText.trim()
+      });
+    },
+    onSuccess: async () => {
+      setMessageText('');
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['messages', selectedChatId] }),
+        queryClient.invalidateQueries({ queryKey: ['chats'] })
+      ]);
     }
   });
 
@@ -74,8 +108,13 @@ export function ChatsPage() {
     }
   }, [chatsQuery.data, selectedChatId]);
 
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messagesQuery.data?.length, selectedChatId]);
+
   const chats = chatsQuery.data ?? [];
   const selectedChat = chats.find((chat) => chat.id === selectedChatId) ?? null;
+  const messages = messagesQuery.data ?? [];
 
   const users = canShowSearchState ? usersQuery.data ?? [] : [];
 
@@ -90,6 +129,12 @@ export function ChatsPage() {
     !usersQuery.isPending &&
     !usersQuery.isError &&
     users.length === 0;
+
+  const canSendMessage = Boolean(selectedChatId) && messageText.trim().length > 0;
+
+  const selectedChatTitle = useMemo(() => {
+    return selectedChat ? getChatTitle(selectedChat) : 'Выбери чат';
+  }, [selectedChat]);
 
   function getChatTitle(chat: Chat): string {
     if (chat.type === 'GROUP') {
@@ -113,6 +158,14 @@ export function ChatsPage() {
     createDirectChatMutation.mutate({
       userId: user.id
     });
+  }
+
+  async function handleMessageSubmit() {
+    if (!canSendMessage || createMessageMutation.isPending) {
+      return;
+    }
+
+    await createMessageMutation.mutateAsync();
   }
 
   return (
@@ -220,21 +273,93 @@ export function ChatsPage() {
         </div>
       </aside>
 
-      <section className="chat-panel">
+      <section className="chat-workspace">
         {selectedChat ? (
-          <div className="chat-empty-state">
-            <p className="eyebrow">Direct chat</p>
-            <h1>{getChatTitle(selectedChat)}</h1>
-            <p className="muted">
-              Чат создан. На следующем этапе добавим историю сообщений и отправку сообщений.
-            </p>
-          </div>
+          <>
+            <header className="chat-header">
+              <div>
+                <p className="eyebrow">Direct Messages</p>
+                <h1>{selectedChatTitle}</h1>
+                <p className="muted">{getChatSubtitle(selectedChat)}</p>
+              </div>
+            </header>
+
+            <div className="messages-panel">
+              {messagesQuery.isLoading ? (
+                <p className="muted">Загружаем сообщения...</p>
+              ) : null}
+
+              {messagesQuery.isError ? (
+                <p className="error">Не удалось загрузить сообщения.</p>
+              ) : null}
+
+              {!messagesQuery.isLoading && messages.length === 0 ? (
+                <div className="empty-messages">
+                  <h2>Сообщений пока нет</h2>
+                  <p className="muted">Напиши первое сообщение в этот чат.</p>
+                </div>
+              ) : null}
+
+              {messages.map((message) => {
+                const isOwn = message.sender?.id === currentUser?.id;
+
+                return (
+                  <article
+                    key={message.id}
+                    className={isOwn ? 'message-bubble own' : 'message-bubble'}
+                  >
+                    <div className="message-meta">
+                      <strong>
+                        {message.sender?.displayName ??
+                          message.sender?.username ??
+                          'Удалённый пользователь'}
+                      </strong>
+                      <span>
+                        {new Intl.DateTimeFormat('ru-RU', {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        }).format(new Date(message.createdAt))}
+                      </span>
+                    </div>
+
+                    <p>{message.content}</p>
+                  </article>
+                );
+              })}
+
+              <div ref={messagesEndRef} />
+            </div>
+
+            <form
+              className="message-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleMessageSubmit();
+              }}
+            >
+              <input
+                type="text"
+                placeholder="Напиши сообщение..."
+                value={messageText}
+                onChange={(event) => setMessageText(event.target.value)}
+              />
+
+              <button
+                type="submit"
+                disabled={!canSendMessage || createMessageMutation.isPending}
+              >
+                {createMessageMutation.isPending ? '...' : 'Отправить'}
+              </button>
+            </form>
+          </>
         ) : (
-          <div className="chat-empty-state">
-            <h1>Выбери чат</h1>
-            <p className="muted">
-              Найди пользователя слева и создай личный чат.
-            </p>
+          <div className="chat-panel">
+            <div className="chat-empty-state">
+              <h1>Выбери чат</h1>
+              <p className="muted">
+                Найди пользователя слева и создай личный чат.
+              </p>
+            </div>
           </div>
         )}
       </section>

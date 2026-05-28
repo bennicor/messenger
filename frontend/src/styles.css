@@ -328,3 +328,124 @@ button:disabled {
 .chat-empty-state {
   width: min(100%, 720px);
 }
+
+.chat-workspace {
+  min-width: 0;
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 28rem),
+    rgba(2, 6, 23, 0.3);
+}
+
+.chat-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.chat-header h1 {
+  margin-bottom: 0.4rem;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+}
+
+.messages-panel {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem;
+}
+
+.empty-messages {
+  margin: auto;
+  text-align: center;
+}
+
+.message-bubble {
+  width: fit-content;
+  max-width: min(72%, 42rem);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 1.15rem;
+  border-bottom-left-radius: 0.25rem;
+  padding: 0.75rem 0.9rem;
+  background: rgba(15, 23, 42, 0.78);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+}
+
+.message-bubble.own {
+  align-self: flex-end;
+  border-bottom-left-radius: 1.15rem;
+  border-bottom-right-radius: 0.25rem;
+  background: rgba(30, 64, 175, 0.45);
+}
+
+.message-bubble p {
+  margin: 0;
+  color: #e5e7eb;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.35rem;
+}
+
+.message-meta strong {
+  color: #bfdbfe;
+  font-size: 0.85rem;
+}
+
+.message-meta span {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.message-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.message-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  padding: 0.85rem 1rem;
+  color: #e5e7eb;
+  background: rgba(2, 6, 23, 0.55);
+  outline: none;
+}
+
+.message-form input:focus {
+  border-color: #93c5fd;
+}
+
+.message-form button {
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .chat-workspace {
+    min-height: 70vh;
+  }
+
+  .message-form {
+    grid-template-columns: 1fr;
+  }
+
+  .message-bubble {
+    max-width: 92%;
+  }
+}

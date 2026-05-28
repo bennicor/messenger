@@ -114,4 +114,8 @@ public class ChatEntity {
     public void setCreatedBy(UserEntity createdBy) {
         this.createdBy = createdBy;
     }
+
+    public void touch() {
+        this.updatedAt = Instant.now();
+    }
 }
