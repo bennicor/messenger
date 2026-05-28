@@ -1,0 +1,5 @@
+FROM maven:3.9.11-eclipse-temurin-21-noble
+
+WORKDIR /app
+
+CMD ["mvn", "spring-boot:run"]
