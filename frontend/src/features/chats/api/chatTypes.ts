@@ -77,3 +77,7 @@ export type CreateGroupChatRequest = {
   title: string;
   memberIds: string[];
 };
+
+export type AddGroupMembersRequest = {
+  memberIds: string[];
+};

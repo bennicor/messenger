@@ -72,4 +72,17 @@ public class ChatController {
     ) {
         chatService.leaveGroupChat(chatId, principal.getId());
     }
+
+    @PostMapping("/{chatId}/members")
+    public ChatResponse addGroupMembers(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID chatId,
+            @Valid @RequestBody AddGroupMembersRequest request
+    ) {
+        return chatService.addGroupMembers(
+                chatId,
+                principal.getId(),
+                request
+        );
+    }
 }

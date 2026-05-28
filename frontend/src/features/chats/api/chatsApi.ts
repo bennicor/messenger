@@ -1,5 +1,6 @@
 import { http } from '@/api/http';
 import type {
+  AddGroupMembersRequest,
   Chat,
   CreateDirectChatRequest,
   CreateGroupChatRequest,
@@ -69,4 +70,12 @@ export async function createGroupChat(request: CreateGroupChatRequest): Promise<
 
 export async function leaveGroupChat(chatId: string): Promise<void> {
   await http.delete(`/chats/${chatId}/members/me`);
+}
+
+export async function addGroupMembers(
+  chatId: string,
+  request: AddGroupMembersRequest
+): Promise<Chat> {
+  const response = await http.post<Chat>(`/chats/${chatId}/members`, request);
+  return response.data;
 }

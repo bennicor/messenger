@@ -9,7 +9,7 @@ import type { UserSummary } from '@/features/auth/authTypes';
 import { createRealtimeClient } from '@/features/chats/api/realtimeClient';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
-import { Check, LogOut, Pencil, Trash2, Users, X } from 'lucide-react';
+import { Check, LogOut, Pencil, Plus, Trash2, Users, X } from 'lucide-react';
 
 import type {
   Chat,
@@ -20,6 +20,7 @@ import type {
 } from '@/features/chats/api/chatTypes';
 
 import {
+  addGroupMembers,
   createDirectChat,
   createGroupChat,
   createMessage,
@@ -81,8 +82,13 @@ export function ChatsPage() {
 
   const [isChatInfoOpen, setIsChatInfoOpen] = useState(false);
 
+  const [memberSearch, setMemberSearch] = useState('');
+  const [selectedNewMemberIds, setSelectedNewMemberIds] = useState<string[]>([]);
+
   const rawSearch = search.trim();
   const debouncedSearch = useDebouncedValue(search, 300).trim();
+
+  const debouncedMemberSearch = useDebouncedValue(memberSearch, 300).trim();
 
   const hasSearch = rawSearch.length > 0;
   const isDebounceSettled = rawSearch === debouncedSearch;
@@ -302,6 +308,35 @@ export function ChatsPage() {
   const selectedChat = chats.find((chat) => chat.id === selectedChatId) ?? null;
   const messages = messagesQuery.data?.pages.flat() ?? [];
 
+  const existingGroupMemberIds = new Set(
+    selectedChat?.members.map((member) => member.id) ?? []
+  );
+
+  const groupUsersQuery = useQuery({
+    queryKey: ['group-users', selectedChatId, debouncedMemberSearch],
+    queryFn: () => getUsers(debouncedMemberSearch),
+    enabled:
+      isAuthenticated &&
+      isChatInfoOpen &&
+      selectedChat?.type === 'GROUP' &&
+      debouncedMemberSearch.length > 0,
+    retry: false,
+    staleTime: 30_000,
+    placeholderData: (previousData) => previousData
+  });
+
+  const availableUsersToAdd =
+    groupUsersQuery.data?.filter((user) => !existingGroupMemberIds.has(user.id)) ?? [];
+
+  const currentGroupMembership = selectedChat?.members.find(
+    (member) => member.id === currentUser?.id
+  );
+
+  const canManageGroupMembers =
+    selectedChat?.type === 'GROUP' &&
+    (currentGroupMembership?.role === 'OWNER' ||
+      currentGroupMembership?.role === 'ADMIN');
+      
   const selectedChatUnreadCount = selectedChat?.unreadCount ?? 0;
 
   useEffect(() => {
@@ -508,6 +543,27 @@ export function ChatsPage() {
     }
   });
 
+  const addGroupMembersMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedChatId) {
+        throw new Error('Chat is not selected');
+      }
+
+      return addGroupMembers(selectedChatId, {
+        memberIds: selectedNewMemberIds
+      });
+    },
+    onSuccess: (chat) => {
+      applyChatListEvent({
+        type: 'UPDATED',
+        chat,
+        chatId: chat.id
+      });
+
+      resetAddMembersForm();
+    }
+  });
+
   const selectChat = useCallback(
     (chat: Chat) => {
       setSelectedChatId(chat.id);
@@ -572,6 +628,11 @@ export function ChatsPage() {
       logout();
     }
   }, [meQuery.isError, logout]);
+
+  useEffect(() => {
+    resetAddMembersForm();
+    setIsChatInfoOpen(false);
+  }, [selectedChatId]);
 
   useEffect(() => {
     if (!chatsQuery.data || chatsQuery.data.length === 0) {
@@ -769,6 +830,21 @@ export function ChatsPage() {
 
       return [...currentIds, userId];
     });
+  }
+
+  function toggleNewGroupMember(userId: string) {
+    setSelectedNewMemberIds((currentIds) => {
+      if (currentIds.includes(userId)) {
+        return currentIds.filter((id) => id !== userId);
+      }
+
+      return [...currentIds, userId];
+    });
+  }
+
+  function resetAddMembersForm() {
+    setMemberSearch('');
+    setSelectedNewMemberIds([]);
   }
 
   function handleUserClick(user: UserSummary) {
@@ -1152,6 +1228,84 @@ export function ChatsPage() {
                   </div>
                 ))}
               </div>
+
+              {canManageGroupMembers ? (
+                <div className="add-members-box">
+                  <div className="add-members-header">
+                    <div>
+                      <h3>Добавить участников</h3>
+                      <p className="muted">Найди пользователей и выбери одного или нескольких.</p>
+                    </div>
+                  </div>
+
+                  <input
+                    type="search"
+                    placeholder="username или email"
+                    value={memberSearch}
+                    onChange={(event) => setMemberSearch(event.target.value)}
+                  />
+
+                  <div className="add-members-results">
+                    {memberSearch.trim().length === 0 ? (
+                      <p className="muted">Начни вводить имя пользователя.</p>
+                    ) : null}
+
+                    {groupUsersQuery.isFetching && debouncedMemberSearch.length > 0 ? (
+                      <p className="muted">Ищем пользователей...</p>
+                    ) : null}
+
+                    {debouncedMemberSearch.length > 0 &&
+                    !groupUsersQuery.isFetching &&
+                    availableUsersToAdd.length === 0 ? (
+                      <p className="muted">Новых пользователей не найдено.</p>
+                    ) : null}
+
+                    {availableUsersToAdd.map((user) => {
+                      const isSelected = selectedNewMemberIds.includes(user.id);
+
+                      return (
+                        <button
+                          key={user.id}
+                          type="button"
+                          className={isSelected ? 'add-member-card selected' : 'add-member-card'}
+                          onClick={() => toggleNewGroupMember(user.id)}
+                        >
+                          <div className="avatar">
+                            {(user.displayName ?? user.username).slice(0, 1).toUpperCase()}
+                          </div>
+
+                          <div>
+                            <strong>{user.displayName ?? user.username}</strong>
+                            <span>@{user.username}</span>
+                          </div>
+
+                          <span className="user-select-indicator">
+                            {isSelected ? <Check size={15} /> : <Plus size={15} />}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="add-members-submit"
+                    disabled={
+                      selectedNewMemberIds.length === 0 ||
+                      addGroupMembersMutation.isPending
+                    }
+                    onClick={() => addGroupMembersMutation.mutate()}
+                  >
+                    {addGroupMembersMutation.isPending
+                      ? 'Добавляем...'
+                      : `Добавить: ${selectedNewMemberIds.length}`}
+                  </button>
+
+                  {addGroupMembersMutation.isError ? (
+                    <p className="error">Не удалось добавить участников.</p>
+                  ) : null}
+                </div>
+              ) : null}
 
               <button
                 type="button"

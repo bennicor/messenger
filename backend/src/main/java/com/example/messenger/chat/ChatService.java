@@ -177,6 +177,70 @@ public class ChatService {
     }
 
     @Transactional
+    public ChatResponse addGroupMembers(
+            UUID chatId,
+            UUID currentUserId,
+            AddGroupMembersRequest request
+    ) {
+        ChatMemberEntity currentMembership = chatMemberRepository
+                .findByChatIdAndUserId(chatId, currentUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Chat not found"));
+
+        ChatEntity chat = currentMembership.getChat();
+
+        if (chat.getType() != ChatType.GROUP) {
+            throw new IllegalArgumentException("Members can be added only to group chats");
+        }
+
+        if (
+                currentMembership.getRole() != ChatMemberRole.OWNER &&
+                currentMembership.getRole() != ChatMemberRole.ADMIN
+        ) {
+            throw new IllegalArgumentException("Only owner or admin can add members");
+        }
+
+        Set<UUID> requestedMemberIds = new HashSet<>(request.memberIds());
+        requestedMemberIds.remove(currentUserId);
+
+        if (requestedMemberIds.isEmpty()) {
+            throw new IllegalArgumentException("No users to add");
+        }
+
+        List<ChatMemberEntity> existingMembers = chatMemberRepository.findAllByChatId(chatId);
+
+        Set<UUID> existingMemberIds = existingMembers.stream()
+                .map(member -> member.getUser().getId())
+                .collect(java.util.stream.Collectors.toSet());
+
+        requestedMemberIds.removeAll(existingMemberIds);
+
+        if (requestedMemberIds.isEmpty()) {
+            return toResponse(chat, currentUserId);
+        }
+
+        List<UserEntity> usersToAdd = userRepository.findAllById(requestedMemberIds);
+
+        if (usersToAdd.size() != requestedMemberIds.size()) {
+            throw new IllegalArgumentException("One or more users were not found");
+        }
+
+        for (UserEntity user : usersToAdd) {
+            chatMemberRepository.save(new ChatMemberEntity(
+                    chat,
+                    user,
+                    ChatMemberRole.MEMBER
+            ));
+        }
+
+        chat.touch();
+        chatRepository.save(chat);
+
+        publishChatToMembers(chat);
+
+        return toResponse(chat, currentUserId);
+    }
+
+    @Transactional
     public void leaveGroupChat(UUID chatId, UUID currentUserId) {
         ChatMemberEntity membership = chatMemberRepository.findByChatIdAndUserId(chatId, currentUserId)
                 .orElseThrow(() -> new IllegalArgumentException("Chat not found"));
