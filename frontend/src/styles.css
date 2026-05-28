@@ -262,3 +262,69 @@ button:disabled {
   background: #bfdbfe;
   font-weight: 900;
 }
+
+.sidebar-section {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.sidebar-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.sidebar-section-title h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.sidebar-section-title span {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.chat-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.chat-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 1rem;
+  padding: 0.75rem;
+  color: #e5e7eb;
+  background: rgba(15, 23, 42, 0.54);
+  text-align: left;
+}
+
+.chat-card:hover {
+  border-color: rgba(147, 197, 253, 0.7);
+  background: rgba(30, 41, 59, 0.92);
+}
+
+.chat-card.active {
+  border-color: rgba(147, 197, 253, 0.95);
+  background: rgba(30, 64, 175, 0.35);
+}
+
+.chat-card div:last-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.chat-card span {
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.chat-empty-state {
+  width: min(100%, 720px);
+}

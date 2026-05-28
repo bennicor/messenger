@@ -1,16 +1,22 @@
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMe } from '@/features/auth/authApi';
 import { getUsers } from '@/features/auth/usersApi';
+import type { UserSummary } from '@/features/auth/authTypes';
+import { createDirectChat, getChats } from '@/features/chats/api/chatsApi';
+import type { Chat } from '@/features/chats/api/chatTypes';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
 
 export function ChatsPage() {
+  const queryClient = useQueryClient();
+
   const logout = useAuthStore((state) => state.logout);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const setUser = useAuthStore((state) => state.setUser);
 
   const [search, setSearch] = useState('');
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
 
   const rawSearch = search.trim();
   const debouncedSearch = useDebouncedValue(search, 300).trim();
@@ -26,12 +32,28 @@ export function ChatsPage() {
     retry: false
   });
 
+  const chatsQuery = useQuery({
+    queryKey: ['chats'],
+    queryFn: getChats,
+    enabled: isAuthenticated,
+    retry: false
+  });
+
   const usersQuery = useQuery({
     queryKey: ['users', debouncedSearch],
     queryFn: () => getUsers(debouncedSearch),
     enabled: isAuthenticated && debouncedSearch.length > 0,
     retry: false,
     staleTime: 30_000
+  });
+
+  const createDirectChatMutation = useMutation({
+    mutationFn: createDirectChat,
+    onSuccess: async (chat) => {
+      setSelectedChatId(chat.id);
+      setSearch('');
+      await queryClient.invalidateQueries({ queryKey: ['chats'] });
+    }
   });
 
   useEffect(() => {
@@ -46,6 +68,15 @@ export function ChatsPage() {
     }
   }, [meQuery.isError, logout]);
 
+  useEffect(() => {
+    if (!selectedChatId && chatsQuery.data && chatsQuery.data.length > 0) {
+      setSelectedChatId(chatsQuery.data[0].id);
+    }
+  }, [chatsQuery.data, selectedChatId]);
+
+  const chats = chatsQuery.data ?? [];
+  const selectedChat = chats.find((chat) => chat.id === selectedChatId) ?? null;
+
   const users = canShowSearchState ? usersQuery.data ?? [] : [];
 
   const showSearchHint = !hasSearch;
@@ -59,6 +90,30 @@ export function ChatsPage() {
     !usersQuery.isPending &&
     !usersQuery.isError &&
     users.length === 0;
+
+  function getChatTitle(chat: Chat): string {
+    if (chat.type === 'GROUP') {
+      return chat.title ?? 'Групповой чат';
+    }
+
+    const member = chat.members[0];
+    return member?.displayName ?? member?.username ?? 'Личный чат';
+  }
+
+  function getChatSubtitle(chat: Chat): string {
+    if (chat.type === 'GROUP') {
+      return `${chat.members.length} участников`;
+    }
+
+    const member = chat.members[0];
+    return member ? `@${member.username}` : 'Личный чат';
+  }
+
+  function handleUserClick(user: UserSummary) {
+    createDirectChatMutation.mutate({
+      userId: user.id
+    });
+  }
 
   return (
     <main className="app-shell">
@@ -106,7 +161,13 @@ export function ChatsPage() {
           ) : null}
 
           {users.map((user) => (
-            <button key={user.id} type="button" className="user-card">
+            <button
+              key={user.id}
+              type="button"
+              className="user-card"
+              disabled={createDirectChatMutation.isPending}
+              onClick={() => handleUserClick(user)}
+            >
               <div className="avatar">
                 {(user.displayName ?? user.username).slice(0, 1).toUpperCase()}
               </div>
@@ -118,13 +179,64 @@ export function ChatsPage() {
             </button>
           ))}
         </div>
+
+        <div className="sidebar-section">
+          <div className="sidebar-section-title">
+            <h3>Мои чаты</h3>
+            {chatsQuery.isFetching ? <span>обновляем...</span> : null}
+          </div>
+
+          <div className="chat-list">
+            {chatsQuery.isLoading ? (
+              <p className="muted">Загружаем чаты...</p>
+            ) : null}
+
+            {chatsQuery.isError ? (
+              <p className="error">Не удалось загрузить чаты.</p>
+            ) : null}
+
+            {!chatsQuery.isLoading && chats.length === 0 ? (
+              <p className="muted">Чатов пока нет. Найди пользователя выше.</p>
+            ) : null}
+
+            {chats.map((chat) => (
+              <button
+                key={chat.id}
+                type="button"
+                className={chat.id === selectedChatId ? 'chat-card active' : 'chat-card'}
+                onClick={() => setSelectedChatId(chat.id)}
+              >
+                <div className="avatar">
+                  {getChatTitle(chat).slice(0, 1).toUpperCase()}
+                </div>
+
+                <div>
+                  <strong>{getChatTitle(chat)}</strong>
+                  <span>{getChatSubtitle(chat)}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
       </aside>
 
       <section className="chat-panel">
-        <h1>Найди пользователя</h1>
-        <p className="muted">
-          Введи username или email слева. На следующем этапе при клике будем создавать личный чат.
-        </p>
+        {selectedChat ? (
+          <div className="chat-empty-state">
+            <p className="eyebrow">Direct chat</p>
+            <h1>{getChatTitle(selectedChat)}</h1>
+            <p className="muted">
+              Чат создан. На следующем этапе добавим историю сообщений и отправку сообщений.
+            </p>
+          </div>
+        ) : (
+          <div className="chat-empty-state">
+            <h1>Выбери чат</h1>
+            <p className="muted">
+              Найди пользователя слева и создай личный чат.
+            </p>
+          </div>
+        )}
       </section>
     </main>
   );

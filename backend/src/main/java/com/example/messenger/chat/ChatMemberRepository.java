@@ -1,5 +1,6 @@
 package com.example.messenger.chat;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -9,7 +10,9 @@ public interface ChatMemberRepository extends JpaRepository<ChatMemberEntity, UU
 
     boolean existsByChatIdAndUserId(UUID chatId, UUID userId);
 
-    List<ChatMemberEntity> findAllByUserId(UUID userId);
+    @EntityGraph(attributePaths = {"chat", "user"})
+    List<ChatMemberEntity> findAllByUserIdOrderByChatUpdatedAtDesc(UUID userId);
 
+    @EntityGraph(attributePaths = {"chat", "user"})
     List<ChatMemberEntity> findAllByChatId(UUID chatId);
 }
