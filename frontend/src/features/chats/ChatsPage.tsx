@@ -95,8 +95,16 @@ export function ChatsPage() {
           oldChats.filter((chat) => chat.id !== event.chatId)
         );
 
-        if (selectedChatId === event.chatId) {
-          setSelectedChatId(null);
+        setSelectedChatId((currentSelectedChatId) =>
+          currentSelectedChatId === event.chatId ? null : currentSelectedChatId
+        );
+
+        const storageKey = currentUser
+          ? `messenger:selectedChatId:${currentUser.id}`
+          : 'messenger:selectedChatId:anonymous';
+
+        if (localStorage.getItem(storageKey) === event.chatId) {
+          localStorage.removeItem(storageKey);
         }
 
         return;
@@ -123,7 +131,7 @@ export function ChatsPage() {
         });
       });
     },
-    [queryClient, selectedChatId]
+    [queryClient, currentUser]
   );
 
   function appendMessageToInfiniteData(
@@ -500,24 +508,54 @@ export function ChatsPage() {
     }
   });
 
-  const leaveGroupChatMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedChatId) {
-        throw new Error('Chat is not selected');
-      }
+  const selectChat = useCallback(
+    (chat: Chat) => {
+      setSelectedChatId(chat.id);
 
-      return leaveGroupChat(selectedChatId);
-    },
-    onSuccess: () => {
-      if (!selectedChatId) {
+      const storageKey = currentUser
+        ? `messenger:selectedChatId:${currentUser.id}`
+        : 'messenger:selectedChatId:anonymous';
+
+      localStorage.setItem(storageKey, chat.id);
+
+      if (chat.unreadCount > 0 && chat.firstUnreadMessageId) {
+        setInitialAroundMessageId(chat.firstUnreadMessageId);
+        firstUnreadTargetMessageIdRef.current = chat.firstUnreadMessageId;
+        shouldScrollToFirstUnreadRef.current = true;
+        shouldScrollToBottomRef.current = false;
         return;
       }
 
-      applyChatListEvent({
-        type: 'REMOVED',
-        chat: null,
-        chatId: selectedChatId
-      });
+      setInitialAroundMessageId(null);
+      firstUnreadTargetMessageIdRef.current = null;
+      shouldScrollToFirstUnreadRef.current = false;
+      shouldScrollToBottomRef.current = true;
+    },
+    [currentUser]
+  );
+
+
+  const leaveGroupChatMutation = useMutation({
+    mutationFn: async (chatId: string) => {
+      await leaveGroupChat(chatId);
+      return chatId;
+    },
+    onSuccess: (chatId) => {
+      queryClient.setQueryData<Chat[]>(['chats'], (oldChats = []) =>
+        oldChats.filter((chat) => chat.id !== chatId)
+      );
+
+      setSelectedChatId((currentSelectedChatId) =>
+        currentSelectedChatId === chatId ? null : currentSelectedChatId
+      );
+
+      const storageKey = currentUser
+        ? `messenger:selectedChatId:${currentUser.id}`
+        : 'messenger:selectedChatId:anonymous';
+
+      if (localStorage.getItem(storageKey) === chatId) {
+        localStorage.removeItem(storageKey);
+      }
 
       setIsChatInfoOpen(false);
     }
@@ -544,29 +582,26 @@ export function ChatsPage() {
       ? `messenger:selectedChatId:${meQuery.data.id}`
       : 'messenger:selectedChatId:anonymous';
 
-    const savedChatId = localStorage.getItem(storageKey);
-    const savedChatExists = savedChatId
-      ? chatsQuery.data.some((chat) => chat.id === savedChatId)
-      : false;
-
-    if (savedChatExists && selectedChatId !== savedChatId) {
-      const savedChat = chatsQuery.data.find((chat) => chat.id === savedChatId);
-
-      if (savedChat) {
-        selectChat(savedChat);
-      }
-
-      return;
-    }
-
     const selectedChatExists = selectedChatId
       ? chatsQuery.data.some((chat) => chat.id === selectedChatId)
       : false;
 
-    if (!selectedChatExists) {
-      selectChat(chatsQuery.data[0]);
+    if (selectedChatExists) {
+      return;
     }
-  }, [chatsQuery.data, selectedChatId, meQuery.data]);
+
+    const savedChatId = localStorage.getItem(storageKey);
+    const savedChat = savedChatId
+      ? chatsQuery.data.find((chat) => chat.id === savedChatId)
+      : null;
+
+    if (savedChat) {
+      selectChat(savedChat);
+      return;
+    }
+
+    selectChat(chatsQuery.data[0]);
+  }, [chatsQuery.data, selectedChatId, meQuery.data, selectChat]);
 
   useLayoutEffect(() => {
     const panel = messagesPanelRef.current;
@@ -814,32 +849,6 @@ export function ChatsPage() {
       }
     });
   }
-
-  const selectChat = useCallback(
-    (chat: Chat) => {
-      setSelectedChatId(chat.id);
-
-      const storageKey = currentUser
-        ? `messenger:selectedChatId:${currentUser.id}`
-        : 'messenger:selectedChatId:anonymous';
-
-      localStorage.setItem(storageKey, chat.id);
-
-      if (chat.unreadCount > 0 && chat.firstUnreadMessageId) {
-        setInitialAroundMessageId(chat.firstUnreadMessageId);
-        firstUnreadTargetMessageIdRef.current = chat.firstUnreadMessageId;
-        shouldScrollToFirstUnreadRef.current = true;
-        shouldScrollToBottomRef.current = false;
-        return;
-      }
-
-      setInitialAroundMessageId(null);
-      firstUnreadTargetMessageIdRef.current = null;
-      shouldScrollToFirstUnreadRef.current = false;
-      shouldScrollToBottomRef.current = true;
-    },
-    [currentUser]
-  );
 
   async function submitMessageEdit() {
     if (
@@ -1148,7 +1157,11 @@ export function ChatsPage() {
                 type="button"
                 className="leave-group-button"
                 disabled={leaveGroupChatMutation.isPending}
-                onClick={() => leaveGroupChatMutation.mutate()}
+                onClick={() => {
+                  if (selectedChat?.type === 'GROUP') {
+                    leaveGroupChatMutation.mutate(selectedChat.id);
+                  }
+                }}
               >
                 <LogOut size={16} />
                 {leaveGroupChatMutation.isPending ? 'Выходим...' : 'Выйти из группы'}
