@@ -90,6 +90,10 @@ export function ChatsPage() {
   const [incomingCall, setIncomingCall] = useState<VoiceSignalResponse | null>(null);
   const [autoStartVoiceChatId, setAutoStartVoiceChatId] = useState<string | null>(null);
 
+  const [activeVoiceCallsByChatId, setActiveVoiceCallsByChatId] = useState<
+    Record<string, Record<string, string>>
+  >({});
+
   const rawSearch = search.trim();
   const debouncedSearch = useDebouncedValue(search, 300).trim();
 
@@ -144,6 +148,41 @@ export function ChatsPage() {
     },
     [queryClient, currentUser]
   );
+
+  function setVoiceCallUser(chatId: string, userId: string, username: string) {
+    setActiveVoiceCallsByChatId((current) => ({
+      ...current,
+      [chatId]: {
+        ...(current[chatId] ?? {}),
+        [userId]: username
+      }
+    }));
+  }
+
+  function removeVoiceCallUser(chatId: string, userId: string) {
+    setActiveVoiceCallsByChatId((current) => {
+      const chatUsers = { ...(current[chatId] ?? {}) };
+      delete chatUsers[userId];
+
+      const next = { ...current };
+
+      if (Object.keys(chatUsers).length === 0) {
+        delete next[chatId];
+      } else {
+        next[chatId] = chatUsers;
+      }
+
+      return next;
+    });
+  }
+
+  function clearVoiceCall(chatId: string) {
+    setActiveVoiceCallsByChatId((current) => {
+      const next = { ...current };
+      delete next[chatId];
+      return next;
+    });
+  }
 
   function appendMessageToInfiniteData(
     data: InfiniteData<Message[]> | undefined,
@@ -379,14 +418,27 @@ export function ChatsPage() {
           }
 
           if (signal.type === 'CALL_INVITE') {
+            setVoiceCallUser(signal.chatId, signal.fromUserId, signal.fromUsername);
             setIncomingCall(signal);
             return;
           }
 
-          if (signal.type === 'CALL_ENDED' || signal.type === 'CALL_DECLINE') {
+          if (signal.type === 'CALL_ENDED') {
+            clearVoiceCall(signal.chatId);
+
             setIncomingCall((currentIncomingCall) =>
               currentIncomingCall?.chatId === signal.chatId ? null : currentIncomingCall
             );
+
+            return;
+          }
+
+          if (signal.type === 'CALL_DECLINE') {
+            setIncomingCall((currentIncomingCall) =>
+              currentIncomingCall?.chatId === signal.chatId ? null : currentIncomingCall
+            );
+
+            return;
           }
         });
       }
@@ -1281,6 +1333,16 @@ export function ChatsPage() {
               currentUser={currentUser}
               autoStart={autoStartVoiceChatId === selectedChat.id}
               onAutoStartConsumed={() => setAutoStartVoiceChatId(null)}
+              externalActiveUsers={activeVoiceCallsByChatId[selectedChat.id] ?? {}}
+              onVoiceUserJoined={(chatId, userId, username) => {
+                setVoiceCallUser(chatId, userId, username);
+              }}
+              onVoiceUserLeft={(chatId, userId) => {
+                removeVoiceCallUser(chatId, userId);
+              }}
+              onVoiceCallEnded={(chatId) => {
+                clearVoiceCall(chatId);
+              }}
             />
           ) : null}
 

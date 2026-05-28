@@ -12,6 +12,10 @@ type VoiceCallPanelProps = {
   currentUser: User;
   autoStart?: boolean;
   onAutoStartConsumed?: () => void;
+  externalActiveUsers?: Record<string, string>;
+  onVoiceUserJoined?: (chatId: string, userId: string, username: string) => void;
+  onVoiceUserLeft?: (chatId: string, userId: string) => void;
+  onVoiceCallEnded?: (chatId: string) => void;
 };
 
 const rtcConfiguration: RTCConfiguration = {
@@ -26,7 +30,11 @@ export function VoiceCallPanel({
   chat,
   currentUser,
   autoStart = false,
-  onAutoStartConsumed
+  onAutoStartConsumed,
+  externalActiveUsers = {},
+  onVoiceUserJoined,
+  onVoiceUserLeft,
+  onVoiceCallEnded
 }: VoiceCallPanelProps) {
   const stompClientRef = useRef<Client | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -46,9 +54,16 @@ export function VoiceCallPanel({
   const [participants, setParticipants] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
-
   const [isRemoteCallActive, setIsRemoteCallActive] = useState(false);
   const [activeCallUsers, setActiveCallUsers] = useState<Record<string, string>>({});
+
+  const mergedActiveCallUsers = {
+    ...externalActiveUsers,
+    ...activeCallUsers
+  };
+
+  const isCallActiveInThisChat =
+    isRemoteCallActive || Object.keys(mergedActiveCallUsers).length > 0;
 
   useEffect(() => {
     activeCallUsersRef.current = activeCallUsers;
@@ -152,6 +167,8 @@ export function VoiceCallPanel({
         type: 'CALL_ENDED'
       });
 
+      onVoiceCallEnded?.(chat.id);
+
       void leaveCall(false);
     }, 8000);
   }
@@ -187,6 +204,17 @@ export function VoiceCallPanel({
 
       setIsInCall(true);
       setIsConnecting(false);
+
+      const currentUserName = currentUser.displayName ?? currentUser.username ?? 'Ты';
+
+      setIsRemoteCallActive(true);
+
+      setActiveCallUsers((current) => ({
+        ...current,
+        [currentUser.id]: currentUserName
+      }));
+
+      onVoiceUserJoined?.(chat.id, currentUser.id, currentUserName);
 
       setIsRemoteCallActive(true);
       setActiveCallUsers((current) => ({
@@ -229,6 +257,7 @@ export function VoiceCallPanel({
       publishSignal({
         type: 'LEAVE'
       });
+      
 
       if (shouldNotifyCallEnded && chat.type === 'DIRECT') {
         publishSignal({
@@ -236,6 +265,8 @@ export function VoiceCallPanel({
         });
       }
     }
+
+    onVoiceUserLeft?.(chat.id, currentUser.id);
 
     Object.values(peersRef.current).forEach((peer) => peer.close());
     peersRef.current = {};
@@ -317,6 +348,7 @@ export function VoiceCallPanel({
     if (signal.type === 'CALL_ENDED') {
       setIsRemoteCallActive(false);
       setActiveCallUsers({});
+      onVoiceCallEnded?.(chat.id);
       void leaveCall(false);
       return;
     }
@@ -328,6 +360,8 @@ export function VoiceCallPanel({
         ...current,
         [signal.fromUserId]: signal.fromUsername
       }));
+
+      onVoiceUserJoined?.(chat.id, signal.fromUserId, signal.fromUsername);
 
       setParticipants((current) => {
         const next = {
@@ -356,6 +390,8 @@ export function VoiceCallPanel({
 
     if (signal.type === 'LEAVE') {
       closePeer(signal.fromUserId);
+
+      onVoiceUserLeft?.(chat.id, signal.fromUserId);
 
       setActiveCallUsers((current) => {
         const next = { ...current };
@@ -561,8 +597,8 @@ export function VoiceCallPanel({
               ? participantNames.length > 0
                 ? `В звонке: ${participantNames.join(', ')}`
                 : 'Ты в звонке. Ждём участников.'
-              : isRemoteCallActive
-                ? `Звонок активен: ${Object.values(activeCallUsers).join(', ')}`
+              : isCallActiveInThisChat
+                ? `Звонок активен: ${Object.values(mergedActiveCallUsers).join(', ')}`
                 : 'Можно начать голосовой звонок в этом чате.'}
           </span>
         </div>
@@ -592,14 +628,14 @@ export function VoiceCallPanel({
         ) : (
           <button
             type="button"
-            className={isRemoteCallActive ? 'voice-start-button join' : 'voice-start-button'}
+            className={isCallActiveInThisChat ? 'voice-start-button join' : 'voice-start-button'}
             disabled={isConnecting}
-            onClick={() => void startCall(!isRemoteCallActive)}
+            onClick={() => void startCall(!isCallActiveInThisChat)}
           >
             <Phone size={17} />
             {isConnecting
               ? 'Подключаемся...'
-              : isRemoteCallActive
+              : isCallActiveInThisChat 
                 ? 'Подключиться'
                 : 'Начать звонок'}
           </button>
