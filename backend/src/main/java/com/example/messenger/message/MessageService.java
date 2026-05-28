@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.time.Instant;
 
 @Service
 public class MessageService {
@@ -38,7 +39,12 @@ public class MessageService {
     }
 
     @Transactional(readOnly = true)
-    public List<MessageResponse> getMessages(UUID chatId, UUID currentUserId, int limit) {
+    public List<MessageResponse> getMessages(
+            UUID chatId,
+            UUID currentUserId,
+            int limit,
+            Instant before
+    ) {
         ensureUserIsChatMember(chatId, currentUserId);
 
         int safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
@@ -49,11 +55,25 @@ public class MessageService {
                 Sort.by(Sort.Direction.DESC, "createdAt")
         );
 
-        List<MessageResponse> messages = messageRepository
-                .findAllByChatIdAndDeletedAtIsNullOrderByCreatedAtDesc(chatId, pageRequest)
-                .stream()
-                .map(MessageResponse::fromEntity)
-                .toList();
+        List<MessageResponse> messages;
+
+        if (before == null) {
+            messages = messageRepository
+                    .findAllByChatIdAndDeletedAtIsNullOrderByCreatedAtDesc(chatId, pageRequest)
+                    .stream()
+                    .map(MessageResponse::fromEntity)
+                    .toList();
+        } else {
+            messages = messageRepository
+                    .findAllByChatIdAndDeletedAtIsNullAndCreatedAtBeforeOrderByCreatedAtDesc(
+                            chatId,
+                            before,
+                            pageRequest
+                    )
+                    .stream()
+                    .map(MessageResponse::fromEntity)
+                    .toList();
+        }
 
         return reversed(messages);
     }

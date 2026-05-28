@@ -294,12 +294,6 @@ h1 {
   background: rgba(30, 64, 175, 0.35);
 }
 
-.user-card div:last-child,
-.chat-card div:last-child {
-  display: grid;
-  gap: 0.2rem;
-}
-
 .user-card span,
 .chat-card span {
   color: #94a3b8;
@@ -723,4 +717,42 @@ h1 {
   .message-form-actions {
     justify-content: flex-end;
   }
+}
+
+.chat-card {
+  position: relative;
+}
+
+.chat-card-content {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+  flex: 1;
+}
+
+.chat-card-content strong,
+.chat-card-content span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unread-badge {
+  min-width: 1.35rem;
+  height: 1.35rem;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  color: #020617;
+  background: #93c5fd;
+  font-size: 0.75rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.older-messages-loader {
+  margin: 0 auto 0.5rem;
+  color: #94a3b8;
+  font-size: 0.82rem;
 }

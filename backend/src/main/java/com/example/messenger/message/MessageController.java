@@ -8,6 +8,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
 
+import java.time.Instant;
+
+
 @RestController
 @RequestMapping("/api/chats/{chatId}/messages")
 public class MessageController {
@@ -27,9 +30,15 @@ public class MessageController {
     public List<MessageResponse> getMessages(
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable UUID chatId,
-            @RequestParam(defaultValue = "50") int limit
+            @RequestParam(defaultValue = "30") int limit,
+            @RequestParam(required = false) Instant before
     ) {
-        return messageService.getMessages(chatId, principal.getId(), limit);
+    return messageService.getMessages(
+            chatId,
+            principal.getId(),
+            limit,
+            before
+    );
     }
 
     @PostMapping

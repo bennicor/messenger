@@ -5,6 +5,11 @@ import com.example.messenger.user.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.example.messenger.message.MessageEntity;
+import com.example.messenger.message.MessageRepository;
+import com.example.messenger.message.MessageResponse;
+import java.time.Instant;
+
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -15,15 +20,31 @@ public class ChatService {
     private final ChatRepository chatRepository;
     private final ChatMemberRepository chatMemberRepository;
     private final UserRepository userRepository;
+    private final MessageRepository messageRepository;
 
     public ChatService(
             ChatRepository chatRepository,
             ChatMemberRepository chatMemberRepository,
-            UserRepository userRepository
+            UserRepository userRepository,
+            MessageRepository messageRepository
     ) {
         this.chatRepository = chatRepository;
         this.chatMemberRepository = chatMemberRepository;
         this.userRepository = userRepository;
+        this.messageRepository = messageRepository;
+    }
+
+    @Transactional
+    public ChatResponse markChatAsRead(UUID chatId, UUID currentUserId) {
+        ChatMemberEntity membership = chatMemberRepository.findByChatIdAndUserId(chatId, currentUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Chat not found"));
+
+        messageRepository.findFirstByChatIdAndDeletedAtIsNullOrderByCreatedAtDesc(chatId)
+                .ifPresent(membership::setLastReadMessage);
+
+        chatMemberRepository.save(membership);
+
+        return getChat(chatId, currentUserId);
     }
 
     @Transactional
@@ -99,20 +120,47 @@ public class ChatService {
         return savedChat;
     }
 
-    private ChatResponse toResponse(ChatEntity chat, UUID currentUserId) {
+    @Transactional(readOnly = true)
+    public ChatResponse toResponse(ChatEntity chat, UUID currentUserId) {
         List<ChatMemberResponse> members = chatMemberRepository.findAllByChatId(chat.getId())
-                .stream()
-                .map(ChatMemberEntity::getUser)
-                .sorted(Comparator.comparing(UserEntity::getUsername))
-                .filter(user -> shouldIncludeMember(chat.getType(), user.getId(), currentUserId))
-                .map(ChatMemberResponse::fromUser)
-                .toList();
+            .stream()
+            .map(ChatMemberEntity::getUser)
+            .sorted(Comparator.comparing(UserEntity::getUsername))
+            .filter(user -> shouldIncludeMember(chat.getType(), user.getId(), currentUserId))
+            .map(ChatMemberResponse::fromUser)
+            .toList();
+
+        MessageResponse lastMessage = messageRepository
+                .findFirstByChatIdAndDeletedAtIsNullOrderByCreatedAtDesc(chat.getId())
+                .map(MessageResponse::fromEntity)
+                .orElse(null);
+
+        ChatMemberEntity currentMembership = chatMemberRepository
+                .findByChatIdAndUserId(chat.getId(), currentUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Chat not found"));
+
+        Instant lastReadAt = currentMembership.getLastReadMessage() == null
+                ? null
+                : currentMembership.getLastReadMessage().getCreatedAt();
+
+        long unreadCount = lastReadAt == null
+                ? messageRepository.countUnreadMessages(
+                        chat.getId(),
+                        currentUserId
+                )
+                : messageRepository.countUnreadMessagesAfter(
+                        chat.getId(),
+                        currentUserId,
+                        lastReadAt
+                );
 
         return new ChatResponse(
                 chat.getId(),
                 chat.getType(),
                 chat.getTitle(),
                 members,
+                lastMessage,
+                unreadCount,
                 chat.getCreatedAt(),
                 chat.getUpdatedAt()
         );

@@ -17,8 +17,17 @@ export async function createDirectChat(request: CreateDirectChatRequest): Promis
   return response.data;
 }
 
-export async function getMessages(chatId: string): Promise<Message[]> {
-  const response = await http.get<Message[]>(`/chats/${chatId}/messages`);
+export async function getMessages(
+  chatId: string,
+  before?: string
+): Promise<Message[]> {
+  const response = await http.get<Message[]>(`/chats/${chatId}/messages`, {
+    params: {
+      limit: 30,
+      before
+    }
+  });
+
   return response.data;
 }
 
@@ -38,5 +47,10 @@ export async function updateMessage(
 
 export async function deleteMessage(chatId: string, messageId: string): Promise<Message> {
   const response = await http.delete<Message>(`/chats/${chatId}/messages/${messageId}`);
+  return response.data;
+}
+
+export async function markChatAsRead(chatId: string): Promise<Chat> {
+  const response = await http.post<Chat>(`/chats/${chatId}/read`);
   return response.data;
 }

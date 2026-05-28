@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react';
 import type { IMessage } from '@stomp/stompjs';
 import type { Client } from '@stomp/stompjs';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
 import { getMe } from '@/features/auth/authApi';
 import { getUsers } from '@/features/auth/usersApi';
 import type { UserSummary } from '@/features/auth/authTypes';
@@ -10,21 +11,23 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
 import { Check, Pencil, Trash2, X } from 'lucide-react';
 
+import type {
+  Chat,
+  ChatListEvent,
+  ChatMessageEvent,
+  Message,
+  TypingEvent
+} from '@/features/chats/api/chatTypes';
+
 import {
   createDirectChat,
   createMessage,
   deleteMessage,
   getChats,
   getMessages,
+  markChatAsRead,
   updateMessage
 } from '@/features/chats/api/chatsApi';
-
-import type {
-  Chat,
-  ChatMessageEvent,
-  Message,
-  TypingEvent
-} from '@/features/chats/api/chatTypes';
 
 export function ChatsPage() {
   const queryClient = useQueryClient();
@@ -32,8 +35,10 @@ export function ChatsPage() {
   const stompClientRef = useRef<Client | null>(null);
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const previousMessagesCountRef = useRef(0);
-  const previousSelectedChatIdRef = useRef<string | null>(null);
+  const messagesPanelRef = useRef<HTMLDivElement | null>(null);
+  const shouldScrollToBottomRef = useRef(false);
+  const previousScrollHeightRef = useRef(0);
+  const isLoadingOlderMessagesRef = useRef(false);
 
   const logout = useAuthStore((state) => state.logout);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -41,7 +46,11 @@ export function ChatsPage() {
   const setUser = useAuthStore((state) => state.setUser);
 
   const [search, setSearch] = useState('');
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(() => {
+    return localStorage.getItem('messenger:selectedChatId:anonymous');
+  });
+
   const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
 
@@ -57,27 +66,110 @@ export function ChatsPage() {
   const isDebounceSettled = rawSearch === debouncedSearch;
   const canShowSearchState = hasSearch && isDebounceSettled;
 
+  const applyChatListEvent = useCallback(
+    (event: ChatListEvent) => {
+      if (event.type !== 'UPDATED') {
+        return;
+      }
+
+      queryClient.setQueryData<Chat[]>(['chats'], (oldChats = []) => {
+        const exists = oldChats.some((chat) => chat.id === event.chat.id);
+
+        const nextChats = exists
+          ? oldChats.map((chat) => (chat.id === event.chat.id ? event.chat : chat))
+          : [event.chat, ...oldChats];
+
+        return nextChats.sort((a, b) => {
+          const aTime = a.lastMessage?.createdAt ?? a.updatedAt;
+          const bTime = b.lastMessage?.createdAt ?? b.updatedAt;
+
+          return new Date(bTime).getTime() - new Date(aTime).getTime();
+        });
+      });
+    },
+    [queryClient]
+  );
+
+  function appendMessageToInfiniteData(
+    data: InfiniteData<Message[]> | undefined,
+    message: Message
+  ): InfiniteData<Message[]> {
+    if (!data) {
+      return {
+        pages: [[message]],
+        pageParams: [undefined]
+      };
+    }
+
+    const alreadyExists = data.pages.some((page) =>
+      page.some((oldMessage) => oldMessage.id === message.id)
+    );
+
+    if (alreadyExists) {
+      return data;
+    }
+
+    const nextPages = data.pages.map((page) => [...page]);
+    const lastPageIndex = nextPages.length - 1;
+
+    nextPages[lastPageIndex] = [...nextPages[lastPageIndex], message];
+
+    return {
+      ...data,
+      pages: nextPages
+    };
+  }
+
+  function updateMessageInInfiniteData(
+    data: InfiniteData<Message[]> | undefined,
+    message: Message
+  ): InfiniteData<Message[]> | undefined {
+    if (!data) {
+      return data;
+    }
+
+    return {
+      ...data,
+      pages: data.pages.map((page) =>
+        page.map((oldMessage) => (oldMessage.id === message.id ? message : oldMessage))
+      )
+    };
+  }
+
+  function deleteMessageFromInfiniteData(
+    data: InfiniteData<Message[]> | undefined,
+    messageId: string
+  ): InfiniteData<Message[]> | undefined {
+    if (!data) {
+      return data;
+    }
+
+    return {
+      ...data,
+      pages: data.pages.map((page) =>
+        page.filter((message) => message.id !== messageId)
+      )
+    };
+  }
+
   const applyMessageEvent = useCallback(
     (event: ChatMessageEvent) => {
-      queryClient.setQueryData<Message[]>(
+      queryClient.setQueryData<InfiniteData<Message[]>>(
         ['messages', event.message.chatId],
-        (oldMessages = []) => {
+        (oldData) => {
           if (event.type === 'CREATED') {
-            const alreadyExists = oldMessages.some((message) => message.id === event.message.id);
-            return alreadyExists ? oldMessages : [...oldMessages, event.message];
+            return appendMessageToInfiniteData(oldData, event.message);
           }
 
           if (event.type === 'UPDATED') {
-            return oldMessages.map((message) =>
-              message.id === event.message.id ? event.message : message
-            );
+            return updateMessageInInfiniteData(oldData, event.message);
           }
 
           if (event.type === 'DELETED') {
-            return oldMessages.filter((message) => message.id !== event.message.id);
+            return deleteMessageFromInfiniteData(oldData, event.message.id);
           }
 
-          return oldMessages;
+          return oldData;
         }
       );
     },
@@ -107,9 +199,23 @@ export function ChatsPage() {
     placeholderData: (previousData) => previousData
   });
 
-  const messagesQuery = useQuery({
+  const messagesQuery = useInfiniteQuery({
     queryKey: ['messages', selectedChatId],
-    queryFn: () => getMessages(selectedChatId!),
+    queryFn: ({ pageParam }) => getMessages(selectedChatId!, pageParam),
+    initialPageParam: undefined as string | undefined,
+
+    getPreviousPageParam: (firstPage) => {
+      if (firstPage.length < 30) {
+        return undefined;
+      }
+
+      return firstPage[0]?.createdAt;
+    },
+
+    getNextPageParam: () => {
+      return undefined;
+    },
+
     enabled: isAuthenticated && Boolean(selectedChatId),
     retry: false
   });
@@ -121,6 +227,10 @@ export function ChatsPage() {
 
   const hasMessageChanged =
     !editingMessageId || normalizedMessageText !== normalizedEditingOriginalText;
+
+  const chats = chatsQuery.data ?? [];
+  const selectedChat = chats.find((chat) => chat.id === selectedChatId) ?? null;
+  const messages = messagesQuery.data?.pages.flat() ?? [];
 
   useEffect(() => {
     const accessToken = useAuthStore.getState().accessToken;
@@ -137,10 +247,16 @@ export function ChatsPage() {
     client.onConnect = () => {
       setIsRealtimeConnected(true);
 
+      if (currentUser?.id) {
+        client.subscribe(`/topic/users/${currentUser.id}/chats/events`, (frame: IMessage) => {
+          const event = JSON.parse(frame.body) as ChatListEvent;
+          applyChatListEvent(event);
+        });
+      }
+
       client.subscribe(`/topic/chats/${selectedChatId}/messages/events`, (frame: IMessage) => {
         const event = JSON.parse(frame.body) as ChatMessageEvent;
         applyMessageEvent(event);
-        void queryClient.invalidateQueries({ queryKey: ['chats'] });
       });
 
       client.subscribe(`/topic/chats/${selectedChatId}/typing`, (frame: IMessage) => {
@@ -202,14 +318,31 @@ export function ChatsPage() {
       stompClientRef.current = null;
       void client.deactivate();
     };
-  }, [isAuthenticated, selectedChatId, queryClient, currentUser?.id, applyMessageEvent]);
+  }, [
+      isAuthenticated,
+      selectedChatId,
+      queryClient,
+      currentUser?.id,
+      applyMessageEvent,
+      applyChatListEvent
+    ]);
 
   const createDirectChatMutation = useMutation({
     mutationFn: createDirectChat,
     onSuccess: async (chat) => {
-      setSelectedChatId(chat.id);
+      selectChat(chat.id);
       setSearch('');
       await queryClient.invalidateQueries({ queryKey: ['chats'] });
+    }
+  });
+
+  const markChatAsReadMutation = useMutation({
+    mutationFn: markChatAsRead,
+    onSuccess: (updatedChat) => {
+      applyChatListEvent({
+        type: 'UPDATED',
+        chat: updatedChat
+      });
     }
   });
 
@@ -225,6 +358,7 @@ export function ChatsPage() {
     },
     onSuccess: async (message) => {
       clearCurrentMessageText();
+      shouldScrollToBottomRef.current = true;
 
       queryClient.setQueryData<Message[]>(
         ['messages', selectedChatId],
@@ -294,28 +428,78 @@ export function ChatsPage() {
   }, [meQuery.isError, logout]);
 
   useEffect(() => {
-    if (!selectedChatId && chatsQuery.data && chatsQuery.data.length > 0) {
+    if (!chatsQuery.data || chatsQuery.data.length === 0) {
+      return;
+    }
+
+    const storageKey = meQuery.data
+      ? `messenger:selectedChatId:${meQuery.data.id}`
+      : 'messenger:selectedChatId:anonymous';
+
+    const savedChatId = localStorage.getItem(storageKey);
+    const savedChatExists = savedChatId
+      ? chatsQuery.data.some((chat) => chat.id === savedChatId)
+      : false;
+
+    if (savedChatExists && selectedChatId !== savedChatId) {
+      setSelectedChatId(savedChatId);
+      return;
+    }
+
+    const selectedChatExists = selectedChatId
+      ? chatsQuery.data.some((chat) => chat.id === selectedChatId)
+      : false;
+
+    if (!selectedChatExists) {
       setSelectedChatId(chatsQuery.data[0].id);
     }
-  }, [chatsQuery.data, selectedChatId]);
+  }, [chatsQuery.data, selectedChatId, meQuery.data]);
 
-  useEffect(() => {
-    const currentMessagesCount = messagesQuery.data?.length ?? 0;
-    const previousMessagesCount = previousMessagesCountRef.current;
-    const previousSelectedChatId = previousSelectedChatIdRef.current;
+  useLayoutEffect(() => {
+    const panel = messagesPanelRef.current;
 
-    const isChatChanged = selectedChatId !== previousSelectedChatId;
-    const isNewMessageAdded = currentMessagesCount > previousMessagesCount;
-
-    if (isChatChanged || isNewMessageAdded) {
-      messagesEndRef.current?.scrollIntoView({
-        behavior: isChatChanged ? 'auto' : 'smooth'
-      });
+    if (!panel) {
+      return;
     }
 
-    previousMessagesCountRef.current = currentMessagesCount;
-    previousSelectedChatIdRef.current = selectedChatId;
-  }, [messagesQuery.data?.length, selectedChatId]);
+    if (isLoadingOlderMessagesRef.current) {
+      const previousScrollHeight = previousScrollHeightRef.current;
+      const newScrollHeight = panel.scrollHeight;
+      panel.scrollTop = newScrollHeight - previousScrollHeight;
+      isLoadingOlderMessagesRef.current = false;
+      return;
+    }
+
+    if (shouldScrollToBottomRef.current) {
+      panel.scrollTop = panel.scrollHeight;
+      shouldScrollToBottomRef.current = false;
+    }
+  }, [messages.length, selectedChatId]);
+
+  useEffect(() => {
+    shouldScrollToBottomRef.current = true;
+  }, [selectedChatId]);
+
+  const markSelectedChatAsRead = useCallback(
+    (chatId: string) => {
+      markChatAsReadMutation.mutate(chatId);
+    },
+    [markChatAsReadMutation]
+  );
+
+  useEffect(() => {
+    if (!selectedChatId || messages.length === 0) {
+      return;
+    }
+
+    const openedChat = chatsQuery.data?.find((chat) => chat.id === selectedChatId);
+
+    if (!openedChat || openedChat.unreadCount === 0) {
+      return;
+    }
+
+    markSelectedChatAsRead(selectedChatId);
+  }, [selectedChatId, messages.length, chatsQuery.data, markChatAsRead]);
 
   useLayoutEffect(() => {
     const textarea = messageInputRef.current;
@@ -332,10 +516,6 @@ export function ChatsPage() {
     textarea.style.height = `${nextHeight}px`;
     textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
   }, [messageText, selectedChatId]);
-
-  const chats = chatsQuery.data ?? [];
-  const selectedChat = chats.find((chat) => chat.id === selectedChatId) ?? null;
-  const messages = messagesQuery.data ?? [];
 
   const typingUsers = selectedChatId
   ? Object.values(typingUsersByChat[selectedChatId] ?? {})
@@ -458,6 +638,16 @@ export function ChatsPage() {
     });
   }
 
+  function selectChat(chatId: string) {
+    setSelectedChatId(chatId);
+
+    const storageKey = currentUser
+      ? `messenger:selectedChatId:${currentUser.id}`
+      : 'messenger:selectedChatId:anonymous';
+
+    localStorage.setItem(storageKey, chatId);
+  }
+
   async function submitMessageEdit() {
     if (
       !selectedChatId ||
@@ -502,10 +692,12 @@ export function ChatsPage() {
         body: JSON.stringify({ content })
       });
 
+      shouldScrollToBottomRef.current = true;
       clearCurrentMessageText();
       return;
     }
 
+    shouldScrollToBottomRef.current = true;
     await createMessageMutation.mutateAsync();
   }
 
@@ -598,16 +790,26 @@ export function ChatsPage() {
                 key={chat.id}
                 type="button"
                 className={chat.id === selectedChatId ? 'chat-card active' : 'chat-card'}
-                onClick={() => setSelectedChatId(chat.id)}
+                onClick={() => selectChat(chat.id)}
               >
                 <div className="avatar">
                   {getChatTitle(chat).slice(0, 1).toUpperCase()}
                 </div>
 
-                <div>
+                <div className="chat-card-content">
                   <strong>{getChatTitle(chat)}</strong>
-                  <span>{getChatSubtitle(chat)}</span>
+                  <span>
+                    {chat.lastMessage
+                      ? chat.lastMessage.content
+                      : getChatSubtitle(chat)}
+                  </span>
                 </div>
+
+                {chat.unreadCount > 0 ? (
+                  <span className="unread-badge">
+                    {chat.unreadCount > 99 ? '99+' : chat.unreadCount}
+                  </span>
+                ) : null}
               </button>
             ))}
           </div>
@@ -628,7 +830,31 @@ export function ChatsPage() {
               </div>
             </header>
 
-            <div className="messages-panel">
+            <div
+              ref={messagesPanelRef}
+              className="messages-panel"
+              onScroll={() => {
+                const panel = messagesPanelRef.current;
+
+                if (
+                  !panel ||
+                  messagesQuery.isFetchingPreviousPage ||
+                  !messagesQuery.hasPreviousPage
+                ) {
+                  return;
+                }
+
+                if (panel.scrollTop <= 80) {
+                  previousScrollHeightRef.current = panel.scrollHeight;
+                  isLoadingOlderMessagesRef.current = true;
+                  void messagesQuery.fetchPreviousPage();
+                }
+              }}
+            >
+              {messagesQuery.isFetchingPreviousPage ? (
+                <p className="older-messages-loader">Загружаем старые сообщения...</p>
+              ) : null}
+
               {messagesQuery.isLoading ? (
                 <p className="muted">Загружаем сообщения...</p>
               ) : null}

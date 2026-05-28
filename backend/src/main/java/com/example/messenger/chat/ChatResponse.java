@@ -1,5 +1,7 @@
 package com.example.messenger.chat;
 
+import com.example.messenger.message.MessageResponse;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -9,6 +11,8 @@ public record ChatResponse(
         ChatType type,
         String title,
         List<ChatMemberResponse> members,
+        MessageResponse lastMessage,
+        long unreadCount,
         Instant createdAt,
         Instant updatedAt
 ) {

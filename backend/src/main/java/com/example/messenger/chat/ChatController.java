@@ -43,4 +43,12 @@ public class ChatController {
                 request.userId()
         );
     }
+
+    @PostMapping("/{chatId}/read")
+    public ChatResponse markChatAsRead(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID chatId
+    ) {
+        return chatService.markChatAsRead(chatId, principal.getId());
+    }
 }

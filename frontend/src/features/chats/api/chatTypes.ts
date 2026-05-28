@@ -12,6 +12,8 @@ export type Chat = {
   type: ChatType;
   title: string | null;
   members: ChatMember[];
+  lastMessage: Message | null;
+  unreadCount: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -57,4 +59,11 @@ export type TypingEvent = {
   userId: string;
   username: string;
   typing: boolean;
+};
+
+export type ChatListEventType = 'UPDATED';
+
+export type ChatListEvent = {
+  type: ChatListEventType;
+  chat: Chat;
 };
