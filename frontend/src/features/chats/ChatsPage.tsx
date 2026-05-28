@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react';
 import type { IMessage } from '@stomp/stompjs';
 import type { Client } from '@stomp/stompjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -8,6 +8,7 @@ import type { UserSummary } from '@/features/auth/authTypes';
 import { createRealtimeClient } from '@/features/chats/api/realtimeClient';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
+import { Check, Pencil, Trash2, X } from 'lucide-react';
 
 import {
   createDirectChat,
@@ -29,6 +30,10 @@ export function ChatsPage() {
   const queryClient = useQueryClient();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const stompClientRef = useRef<Client | null>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const previousMessagesCountRef = useRef(0);
+  const previousSelectedChatIdRef = useRef<string | null>(null);
 
   const logout = useAuthStore((state) => state.logout);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -41,7 +46,8 @@ export function ChatsPage() {
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
 
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [editingText, setEditingText] = useState('');
+  const [editingOriginalText, setEditingOriginalText] = useState('');
+
   const [typingUsersByChat, setTypingUsersByChat] = useState<Record<string, Record<string, string>>>({});
 
   const rawSearch = search.trim();
@@ -107,6 +113,14 @@ export function ChatsPage() {
     enabled: isAuthenticated && Boolean(selectedChatId),
     retry: false
   });
+
+  const messageText = selectedChatId ? messageDrafts[selectedChatId] ?? '' : '';
+
+  const normalizedMessageText = messageText.trim();
+  const normalizedEditingOriginalText = editingOriginalText.trim();
+
+  const hasMessageChanged =
+    !editingMessageId || normalizedMessageText !== normalizedEditingOriginalText;
 
   useEffect(() => {
     const accessToken = useAuthStore.getState().accessToken;
@@ -236,7 +250,7 @@ export function ChatsPage() {
       }
 
       return updateMessage(selectedChatId, editingMessageId, {
-        content: editingText.trim()
+        content: normalizedMessageText
       });
     },
     onSuccess: (message) => {
@@ -246,7 +260,8 @@ export function ChatsPage() {
       });
 
       setEditingMessageId(null);
-      setEditingText('');
+      setEditingOriginalText('');
+      clearCurrentMessageText();
     }
   });
 
@@ -285,8 +300,38 @@ export function ChatsPage() {
   }, [chatsQuery.data, selectedChatId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const currentMessagesCount = messagesQuery.data?.length ?? 0;
+    const previousMessagesCount = previousMessagesCountRef.current;
+    const previousSelectedChatId = previousSelectedChatIdRef.current;
+
+    const isChatChanged = selectedChatId !== previousSelectedChatId;
+    const isNewMessageAdded = currentMessagesCount > previousMessagesCount;
+
+    if (isChatChanged || isNewMessageAdded) {
+      messagesEndRef.current?.scrollIntoView({
+        behavior: isChatChanged ? 'auto' : 'smooth'
+      });
+    }
+
+    previousMessagesCountRef.current = currentMessagesCount;
+    previousSelectedChatIdRef.current = selectedChatId;
   }, [messagesQuery.data?.length, selectedChatId]);
+
+  useLayoutEffect(() => {
+    const textarea = messageInputRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    const maxHeight = 160;
+
+    textarea.style.height = 'auto';
+
+    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, [messageText, selectedChatId]);
 
   const chats = chatsQuery.data ?? [];
   const selectedChat = chats.find((chat) => chat.id === selectedChatId) ?? null;
@@ -295,8 +340,6 @@ export function ChatsPage() {
   const typingUsers = selectedChatId
   ? Object.values(typingUsersByChat[selectedChatId] ?? {})
   : [];
-
-  const messageText = selectedChatId ? messageDrafts[selectedChatId] ?? '' : '';
 
   const users = hasSearch ? usersQuery.data ?? [] : [];
 
@@ -314,7 +357,10 @@ export function ChatsPage() {
     !usersQuery.isError &&
     users.length === 0;
 
-  const canSendMessage = Boolean(selectedChatId) && messageText.trim().length > 0;
+  const canSendMessage =
+    Boolean(selectedChatId) &&
+    normalizedMessageText.length > 0 &&
+    hasMessageChanged;
 
   const selectedChatTitle = useMemo(() => {
     return selectedChat ? getChatTitle(selectedChat) : 'Выбери чат';
@@ -389,12 +435,37 @@ export function ChatsPage() {
   }
 
   function startEditingMessage(message: Message) {
+    if (!selectedChatId) {
+      return;
+    }
+
     setEditingMessageId(message.id);
-    setEditingText(message.content);
+    setEditingOriginalText(message.content);
+
+    setMessageDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [selectedChatId]: message.content
+    }));
+
+    requestAnimationFrame(() => {
+      const textarea = messageInputRef.current;
+      textarea?.focus();
+
+      if (textarea) {
+        textarea.selectionStart = textarea.value.length;
+        textarea.selectionEnd = textarea.value.length;
+      }
+    });
   }
 
   async function submitMessageEdit() {
-    if (!editingText.trim() || updateMessageMutation.isPending) {
+    if (
+      !selectedChatId ||
+      !editingMessageId ||
+      !normalizedMessageText ||
+      !hasMessageChanged ||
+      updateMessageMutation.isPending
+    ) {
       return;
     }
 
@@ -403,13 +474,23 @@ export function ChatsPage() {
 
   function cancelMessageEdit() {
     setEditingMessageId(null);
-    setEditingText('');
+    setEditingOriginalText('');
+    clearCurrentMessageText();
   }
 
   async function handleMessageSubmit() {
-    const content = messageText.trim();
+    const content = normalizedMessageText;
 
-    if (!selectedChatId || !content || createMessageMutation.isPending) {
+    if (!selectedChatId || !content || !hasMessageChanged) {
+      return;
+    }
+
+    if (editingMessageId) {
+      await submitMessageEdit();
+      return;
+    }
+
+    if (createMessageMutation.isPending) {
       return;
     }
 
@@ -586,82 +667,108 @@ export function ChatsPage() {
                       </span>
                     </div>
 
-                    {editingMessageId === message.id ? (
-                      <form
-                        className="edit-message-form"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          void submitMessageEdit();
-                        }}
-                      >
-                        <input
-                          value={editingText}
-                          onChange={(event) => setEditingText(event.target.value)}
-                          autoFocus
-                        />
+                    <p>{message.content}</p>
 
-                        <div className="message-actions">
-                          <button type="submit" disabled={!editingText.trim() || updateMessageMutation.isPending}>
-                            Сохранить
-                          </button>
-                          <button type="button" onClick={cancelMessageEdit}>
-                            Отмена
-                          </button>
-                        </div>
-                      </form>
-                    ) : (
-                      <>
-                        <p>{message.content}</p>
+                    {isOwn ? (
+                      <div className="message-actions floating">
+                        <button
+                          type="button"
+                          className="icon-button"
+                          title="Изменить сообщение"
+                          aria-label="Изменить сообщение"
+                          onClick={() => startEditingMessage(message)}
+                        >
+                          <Pencil size={14} strokeWidth={2.2} />
+                        </button>
 
-                        {isOwn ? (
-                          <div className="message-actions">
-                            <button type="button" onClick={() => startEditingMessage(message)}>
-                              Изменить
-                            </button>
-                            <button
-                              type="button"
-                              disabled={deleteMessageMutation.isPending}
-                              onClick={() => deleteMessageMutation.mutate(message.id)}
-                            >
-                              Удалить
-                            </button>
-                          </div>
-                        ) : null}
-                      </>
-                    )}
+                        <button
+                          type="button"
+                          className="icon-button danger"
+                          title="Удалить сообщение"
+                          aria-label="Удалить сообщение"
+                          disabled={deleteMessageMutation.isPending}
+                          onClick={() => deleteMessageMutation.mutate(message.id)}
+                        >
+                          <Trash2 size={14} strokeWidth={2.2} />
+                        </button>
+                      </div>
+                    ) : null}
                   </article>
                 );
               })}
+              
+              <div ref={messagesEndRef} />
+            </div>
 
+            <div className="typing-row">
               {typingUsers.length > 0 ? (
                 <p className="typing-indicator">
                   {typingUsers.join(', ')} печатает...
                 </p>
               ) : null}
-              
-              <div ref={messagesEndRef} />
             </div>
 
             <form
-              className="message-form"
+              className={editingMessageId ? 'message-form editing' : 'message-form'}
               onSubmit={(event) => {
                 event.preventDefault();
                 void handleMessageSubmit();
               }}
             >
-              <input
-                type="text"
-                placeholder="Напиши сообщение..."
+              <textarea
+                ref={messageInputRef}
+                placeholder={editingMessageId ? 'Редактирование сообщения...' : 'Напиши сообщение...'}
                 value={messageText}
+                rows={1}
                 onChange={(event) => updateMessageText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    void handleMessageSubmit();
+                  }
+
+                  if (event.key === 'Escape' && editingMessageId) {
+                    event.preventDefault();
+                    cancelMessageEdit();
+                  }
+                }}
               />
 
-              <button
-                type="submit"
-                disabled={!canSendMessage || createMessageMutation.isPending}
-              >
-                {createMessageMutation.isPending ? '...' : 'Отправить'}
-              </button>
+              <div className="message-form-actions">
+                {editingMessageId ? (
+                  <button
+                    type="button"
+                    className="icon-submit secondary"
+                    title="Отменить редактирование"
+                    aria-label="Отменить редактирование"
+                    onClick={cancelMessageEdit}
+                  >
+                    <X size={18} />
+                  </button>
+                ) : null}
+
+                  <button
+                    type="submit"
+                    className="icon-submit"
+                    disabled={!canSendMessage || createMessageMutation.isPending || updateMessageMutation.isPending}
+                    title={
+                      editingMessageId && !hasMessageChanged
+                        ? 'Сообщение не изменено'
+                        : editingMessageId
+                          ? 'Сохранить'
+                          : 'Отправить'
+                    }
+                    aria-label={
+                      editingMessageId && !hasMessageChanged
+                        ? 'Сообщение не изменено'
+                        : editingMessageId
+                          ? 'Сохранить'
+                          : 'Отправить'
+                    }
+                  >
+                    {editingMessageId ? <Check size={18} /> : <span className="send-arrow">➤</span>}
+                  </button>
+              </div>
             </form>
           </>
         ) : (
