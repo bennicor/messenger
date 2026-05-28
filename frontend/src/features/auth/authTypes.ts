@@ -7,6 +7,13 @@ export type User = {
   createdAt: string;
 };
 
+export type UserSummary = {
+  id: string;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+};
+
 export type AuthResponse = {
   accessToken: string;
   tokenType: 'Bearer';

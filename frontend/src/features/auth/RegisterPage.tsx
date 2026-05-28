@@ -1,10 +1,17 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { register } from './authApi';
 import { useAuthStore } from '@/stores/authStore';
 
 export function RegisterPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = location.state?.from;
+  const redirectTo =
+    typeof from?.pathname === 'string'
+      ? `${from.pathname}${from.search ?? ''}${from.hash ?? ''}`
+      : '/chats';
+
   const setAuth = useAuthStore((state) => state.setAuth);
 
   const [username, setUsername] = useState('');
@@ -20,7 +27,7 @@ export function RegisterPage() {
     try {
       const response = await register({ username, email, password });
       setAuth(response.accessToken, response.user);
-      navigate('/chats');
+      navigate(redirectTo, { replace: true });
     } catch {
       setError('Не удалось зарегистрироваться. Возможно, username или email уже заняты.');
     } finally {
@@ -88,7 +95,7 @@ export function RegisterPage() {
         </form>
 
         <p className="muted auth-link">
-          Уже есть аккаунт? <Link to="/login">Войти</Link>
+          Уже есть аккаунт? <Link to="/login" state={{ from }}>Войти</Link>
         </p>
       </section>
     </main>

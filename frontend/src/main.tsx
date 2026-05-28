@@ -5,6 +5,7 @@ import { HomePage } from './HomePage';
 import { LoginPage } from './features/auth/LoginPage';
 import { RegisterPage } from './features/auth/RegisterPage';
 import { ChatsPage } from './features/chats/ChatsPage';
+import { PublicOnly, RequireAuth } from './routing/AuthRoutes';
 import './styles.css';
 
 const queryClient = new QueryClient();
@@ -15,16 +16,26 @@ const router = createBrowserRouter([
     element: <HomePage />
   },
   {
-    path: '/login',
-    element: <LoginPage />
+    element: <PublicOnly />,
+    children: [
+      {
+        path: '/login',
+        element: <LoginPage />
+      },
+      {
+        path: '/register',
+        element: <RegisterPage />
+      }
+    ]
   },
   {
-    path: '/register',
-    element: <RegisterPage />
-  },
-  {
-    path: '/chats',
-    element: <ChatsPage />
+    element: <RequireAuth />,
+    children: [
+      {
+        path: '/chats',
+        element: <ChatsPage />
+      }
+    ]
   }
 ]);
 

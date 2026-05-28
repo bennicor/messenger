@@ -1,10 +1,17 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { login } from './authApi';
 import { useAuthStore } from '@/stores/authStore';
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const from = location.state?.from;
+  const redirectTo =
+    typeof from?.pathname === 'string'
+      ? `${from.pathname}${from.search ?? ''}${from.hash ?? ''}`
+      : '/chats';
+
   const setAuth = useAuthStore((state) => state.setAuth);
 
   const [email, setEmail] = useState('');
@@ -19,7 +26,7 @@ export function LoginPage() {
     try {
       const response = await login({ email, password });
       setAuth(response.accessToken, response.user);
-      navigate('/chats');
+      navigate(redirectTo, { replace: true });
     } catch {
       setError('Не удалось войти. Проверь email и пароль.');
     } finally {
@@ -72,7 +79,7 @@ export function LoginPage() {
         </form>
 
         <p className="muted auth-link">
-          Нет аккаунта? <Link to="/register">Зарегистрироваться</Link>
+          Нет аккаунта? <Link to="/register" state={{ from }}>Зарегистрироваться</Link>
         </p>
       </section>
     </main>

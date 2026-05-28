@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Navigate } from 'react-router-dom';
 import { getMe } from '@/features/auth/authApi';
+import { getUsers } from '@/features/auth/usersApi';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
 
 export function ChatsPage() {
@@ -8,25 +10,55 @@ export function ChatsPage() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const setUser = useAuthStore((state) => state.setUser);
 
-  const { data: user, isLoading, isError } = useQuery({
+  const [search, setSearch] = useState('');
+
+  const rawSearch = search.trim();
+  const debouncedSearch = useDebouncedValue(search, 300).trim();
+
+  const hasSearch = rawSearch.length > 0;
+  const isDebounceSettled = rawSearch === debouncedSearch;
+  const canShowSearchState = hasSearch && isDebounceSettled;
+
+  const meQuery = useQuery({
     queryKey: ['me'],
     queryFn: getMe,
     enabled: isAuthenticated,
     retry: false
   });
 
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
+  const usersQuery = useQuery({
+    queryKey: ['users', debouncedSearch],
+    queryFn: () => getUsers(debouncedSearch),
+    enabled: isAuthenticated && debouncedSearch.length > 0,
+    retry: false,
+    staleTime: 30_000
+  });
 
-  if (user) {
-    setUser(user);
-  }
+  useEffect(() => {
+    if (meQuery.data) {
+      setUser(meQuery.data);
+    }
+  }, [meQuery.data, setUser]);
 
-  if (isError) {
-    logout();
-    return <Navigate to="/login" replace />;
-  }
+  useEffect(() => {
+    if (meQuery.isError) {
+      logout();
+    }
+  }, [meQuery.isError, logout]);
+
+  const users = canShowSearchState ? usersQuery.data ?? [] : [];
+
+  const showSearchHint = !hasSearch;
+  const showSearching =
+    hasSearch &&
+    (!isDebounceSettled || usersQuery.isFetching || usersQuery.isPending);
+
+  const showEmptyState =
+    canShowSearchState &&
+    !usersQuery.isFetching &&
+    !usersQuery.isPending &&
+    !usersQuery.isError &&
+    users.length === 0;
 
   return (
     <main className="app-shell">
@@ -35,7 +67,9 @@ export function ChatsPage() {
           <div>
             <h2>Чаты</h2>
             <p className="muted">
-              {isLoading ? 'Загружаем профиль...' : `Вы вошли как ${user?.username ?? ''}`}
+              {meQuery.isLoading
+                ? 'Загружаем профиль...'
+                : `Вы вошли как ${meQuery.data?.username ?? ''}`}
             </p>
           </div>
 
@@ -44,15 +78,52 @@ export function ChatsPage() {
           </button>
         </div>
 
-        <p className="muted">
-          На следующем этапе здесь появятся пользователи и создание личных чатов.
-        </p>
+        <label className="search-label">
+          Поиск пользователей
+          <input
+            type="search"
+            placeholder="Начни вводить username или email"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
+
+        <div className="user-list">
+          {showSearchHint ? (
+            <p className="muted">Начни вводить имя пользователя, чтобы найти человека.</p>
+          ) : null}
+
+          {showSearching ? (
+            <p className="muted">Ищем пользователей...</p>
+          ) : null}
+
+          {usersQuery.isError && hasSearch ? (
+            <p className="error">Не удалось загрузить пользователей.</p>
+          ) : null}
+
+          {showEmptyState ? (
+            <p className="muted">Пользователи не найдены.</p>
+          ) : null}
+
+          {users.map((user) => (
+            <button key={user.id} type="button" className="user-card">
+              <div className="avatar">
+                {(user.displayName ?? user.username).slice(0, 1).toUpperCase()}
+              </div>
+
+              <div>
+                <strong>{user.displayName ?? user.username}</strong>
+                <span>@{user.username}</span>
+              </div>
+            </button>
+          ))}
+        </div>
       </aside>
 
       <section className="chat-panel">
-        <h1>Auth работает</h1>
+        <h1>Найди пользователя</h1>
         <p className="muted">
-          Пользователь авторизован, JWT сохранён, запрос /users/me проходит.
+          Введи username или email слева. На следующем этапе при клике будем создавать личный чат.
         </p>
       </section>
     </main>
