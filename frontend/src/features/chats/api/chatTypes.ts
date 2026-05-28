@@ -68,3 +68,8 @@ export type ChatListEvent = {
   type: ChatListEventType;
   chat: Chat;
 };
+
+export type CreateGroupChatRequest = {
+  title: string;
+  memberIds: string[];
+};

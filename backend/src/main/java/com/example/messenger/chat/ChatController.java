@@ -51,4 +51,16 @@ public class ChatController {
     ) {
         return chatService.markChatAsRead(chatId, principal.getId());
     }
+
+    @PostMapping("/group")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ChatResponse createGroupChat(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @Valid @RequestBody CreateGroupChatRequest request
+    ) {
+        return chatService.createGroupChat(
+                principal.getId(),
+                request
+        );
+    }
 }

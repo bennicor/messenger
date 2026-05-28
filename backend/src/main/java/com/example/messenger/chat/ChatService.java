@@ -14,6 +14,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
+import java.util.HashSet;
+import java.util.Set;
+
 @Service
 public class ChatService {
 
@@ -21,17 +24,66 @@ public class ChatService {
     private final ChatMemberRepository chatMemberRepository;
     private final UserRepository userRepository;
     private final MessageRepository messageRepository;
+    private final ChatEventPublisher chatEventPublisher;
 
     public ChatService(
             ChatRepository chatRepository,
             ChatMemberRepository chatMemberRepository,
             UserRepository userRepository,
-            MessageRepository messageRepository
+            MessageRepository messageRepository,
+            ChatEventPublisher chatEventPublisher
     ) {
         this.chatRepository = chatRepository;
         this.chatMemberRepository = chatMemberRepository;
         this.userRepository = userRepository;
         this.messageRepository = messageRepository;
+        this.chatEventPublisher = chatEventPublisher;
+    }
+
+    @Transactional
+    public ChatResponse createGroupChat(UUID currentUserId, CreateGroupChatRequest request) {
+        UserEntity currentUser = userRepository.findById(currentUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Current user not found"));
+
+        Set<UUID> memberIds = new HashSet<>(request.memberIds());
+        memberIds.remove(currentUserId);
+
+        if (memberIds.isEmpty()) {
+            throw new IllegalArgumentException("Group chat must contain at least one other member");
+        }
+
+        List<UserEntity> members = userRepository.findAllById(memberIds);
+
+        if (members.size() != memberIds.size()) {
+            throw new IllegalArgumentException("One or more users were not found");
+        }
+
+        ChatEntity chat = new ChatEntity(
+                ChatType.GROUP,
+                request.title().trim(),
+                null,
+                currentUser
+        );
+
+        ChatEntity savedChat = chatRepository.save(chat);
+
+        chatMemberRepository.save(new ChatMemberEntity(
+                savedChat,
+                currentUser,
+                ChatMemberRole.OWNER
+        ));
+
+        for (UserEntity member : members) {
+            chatMemberRepository.save(new ChatMemberEntity(
+                    savedChat,
+                    member,
+                    ChatMemberRole.MEMBER
+            ));
+        }
+
+        publishChatToMembers(savedChat);
+
+        return toResponse(savedChat, currentUserId);
     }
 
     @Transactional
@@ -62,7 +114,11 @@ public class ChatService {
         String directKey = buildDirectKey(currentUserId, targetUserId);
 
         ChatEntity chat = chatRepository.findByDirectKey(directKey)
-                .orElseGet(() -> createDirectChat(currentUser, targetUser, directKey));
+                .orElseGet(() -> {
+                    ChatEntity createdChat = createDirectChat(currentUser, targetUser, directKey);
+                    publishChatToMembers(createdChat);
+                    return createdChat;
+                });
 
         return toResponse(chat, currentUserId);
     }
@@ -203,5 +259,14 @@ public class ChatService {
                 .sorted()
                 .reduce((first, second) -> first + ":" + second)
                 .orElseThrow();
+    }
+
+    private void publishChatToMembers(ChatEntity chat) {
+        for (ChatMemberEntity member : chatMemberRepository.findAllByChatId(chat.getId())) {
+            UUID userId = member.getUser().getId();
+            ChatResponse chatResponse = toResponse(chat, userId);
+
+            chatEventPublisher.publishChatUpdated(userId, chatResponse);
+        }
     }
 }

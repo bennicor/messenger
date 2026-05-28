@@ -9,7 +9,7 @@ import type { UserSummary } from '@/features/auth/authTypes';
 import { createRealtimeClient } from '@/features/chats/api/realtimeClient';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
-import { Check, Pencil, Trash2, X } from 'lucide-react';
+import { Check, Pencil, Trash2, Users, X } from 'lucide-react';
 
 import type {
   Chat,
@@ -21,6 +21,7 @@ import type {
 
 import {
   createDirectChat,
+  createGroupChat,
   createMessage,
   deleteMessage,
   getChats,
@@ -66,12 +67,16 @@ export function ChatsPage() {
   });
 
   const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
-  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
+  const [, setIsRealtimeConnected] = useState(false);
 
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingOriginalText, setEditingOriginalText] = useState('');
 
   const [typingUsersByChat, setTypingUsersByChat] = useState<Record<string, Record<string, string>>>({});
+
+  const [isGroupMode, setIsGroupMode] = useState(false);
+  const [groupTitle, setGroupTitle] = useState('');
+  const [selectedGroupMemberIds, setSelectedGroupMemberIds] = useState<string[]>([]);
 
   const rawSearch = search.trim();
   const debouncedSearch = useDebouncedValue(search, 300).trim();
@@ -398,6 +403,25 @@ export function ChatsPage() {
     [markChatAsReadMutate]
   );
 
+  const createGroupChatMutation = useMutation({
+    mutationFn: async () => {
+      return createGroupChat({
+        title: groupTitle.trim(),
+        memberIds: selectedGroupMemberIds
+      });
+    },
+    onSuccess: (chat) => {
+      applyChatListEvent({
+        type: 'UPDATED',
+        chat
+      });
+
+      selectChat(chat);
+      resetGroupCreator();
+      setSearch('');
+    }
+  });
+
   const createMessageMutation = useMutation({
     mutationFn: async () => {
       if (!selectedChatId) {
@@ -655,7 +679,28 @@ export function ChatsPage() {
     return member ? `@${member.username}` : 'Личный чат';
   }
 
+  function resetGroupCreator() {
+    setIsGroupMode(false);
+    setGroupTitle('');
+    setSelectedGroupMemberIds([]);
+  }
+
+  function toggleGroupMember(userId: string) {
+    setSelectedGroupMemberIds((currentIds) => {
+      if (currentIds.includes(userId)) {
+        return currentIds.filter((id) => id !== userId);
+      }
+
+      return [...currentIds, userId];
+    });
+  }
+
   function handleUserClick(user: UserSummary) {
+    if (isGroupMode) {
+      toggleGroupMember(user.id);
+      return;
+    }
+
     createDirectChatMutation.mutate({
       userId: user.id
     });
@@ -821,9 +866,26 @@ export function ChatsPage() {
             </p>
           </div>
 
-          <button type="button" className="small-button" onClick={logout}>
-            Выйти
-          </button>
+          <div className="sidebar-actions">
+            <button type="button" className="small-button logout-button" onClick={logout}>
+              Выйти
+            </button>
+
+            <button
+              type="button"
+              className={isGroupMode ? 'group-mode-button active' : 'group-mode-button'}
+              onClick={() => {
+                if (isGroupMode) {
+                  resetGroupCreator();
+                } else {
+                  setIsGroupMode(true);
+                }
+              }}
+            >
+              <Users size={16} />
+              <span>Группа</span>
+            </button>
+          </div>
         </div>
 
         <label className="search-label">
@@ -835,6 +897,43 @@ export function ChatsPage() {
             onChange={(event) => setSearch(event.target.value)}
           />
         </label>
+
+        {isGroupMode ? (
+          <div className="group-creator">
+            <label>
+              Название группы
+              <input
+                type="text"
+                placeholder="Например: Курсач"
+                value={groupTitle}
+                maxLength={80}
+                onChange={(event) => setGroupTitle(event.target.value)}
+              />
+            </label>
+
+            <div className="group-creator-footer">
+              <span>
+                Выбрано: {selectedGroupMemberIds.length}
+              </span>
+
+              <button
+                type="button"
+                disabled={
+                  !groupTitle.trim() ||
+                  selectedGroupMemberIds.length === 0 ||
+                  createGroupChatMutation.isPending
+                }
+                onClick={() => createGroupChatMutation.mutate()}
+              >
+                {createGroupChatMutation.isPending ? 'Создаём...' : 'Создать'}
+              </button>
+            </div>
+
+            <p className="muted group-hint">
+              Найди пользователей через поиск и выбери участников группы.
+            </p>
+          </div>
+        ) : null}
 
         <div className="user-list">
           {showSearchHint ? (
@@ -853,24 +952,40 @@ export function ChatsPage() {
             <p className="muted">Пользователи не найдены.</p>
           ) : null}
 
-          {users.map((user) => (
-            <button
-              key={user.id}
-              type="button"
-              className="user-card"
-              disabled={createDirectChatMutation.isPending}
-              onClick={() => handleUserClick(user)}
-            >
-              <div className="avatar">
-                {(user.displayName ?? user.username).slice(0, 1).toUpperCase()}
-              </div>
+          {users.map((user) => {
+            const isSelectedForGroup = selectedGroupMemberIds.includes(user.id);
 
-              <div>
-                <strong>{user.displayName ?? user.username}</strong>
-                <span>@{user.username}</span>
-              </div>
-            </button>
-          ))}
+            return (
+              <button
+                key={user.id}
+                type="button"
+                className={[
+                  'user-card',
+                  isSelectedForGroup ? 'selected' : ''
+                ].filter(Boolean).join(' ')}
+                disabled={
+                  createDirectChatMutation.isPending ||
+                  createGroupChatMutation.isPending
+                }
+                onClick={() => handleUserClick(user)}
+              >
+                <div className="avatar">
+                  {(user.displayName ?? user.username).slice(0, 1).toUpperCase()}
+                </div>
+
+                <div>
+                  <strong>{user.displayName ?? user.username}</strong>
+                  <span>@{user.username}</span>
+                </div>
+
+                {isGroupMode ? (
+                  <span className="user-select-indicator">
+                    {isSelectedForGroup ? <Check size={15} /> : '+'}
+                  </span>
+                ) : null}
+              </button>
+            );}
+          )}
         </div>
 
         <div className="sidebar-section">
@@ -931,9 +1046,6 @@ export function ChatsPage() {
                 <p className="eyebrow">Direct Messages</p>
                 <h1>{selectedChatTitle}</h1>
                 <p className="muted">{getChatSubtitle(selectedChat)}</p>
-                <p className={isRealtimeConnected ? 'connection-status online' : 'connection-status'}>
-                  {isRealtimeConnected ? 'Realtime подключён' : 'Realtime подключается...'}
-                </p>
               </div>
             </header>
 

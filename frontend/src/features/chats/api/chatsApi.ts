@@ -2,6 +2,7 @@ import { http } from '@/api/http';
 import type {
   Chat,
   CreateDirectChatRequest,
+  CreateGroupChatRequest,
   CreateMessageRequest,
   Message,
   UpdateMessageRequest
@@ -58,5 +59,10 @@ export async function deleteMessage(chatId: string, messageId: string): Promise<
 
 export async function markChatAsRead(chatId: string): Promise<Chat> {
   const response = await http.post<Chat>(`/chats/${chatId}/read`);
+  return response.data;
+}
+
+export async function createGroupChat(request: CreateGroupChatRequest): Promise<Chat> {
+  const response = await http.post<Chat>('/chats/group', request);
   return response.data;
 }
