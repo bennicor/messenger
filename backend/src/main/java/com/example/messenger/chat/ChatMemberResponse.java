@@ -8,14 +8,28 @@ public record ChatMemberResponse(
         UUID id,
         String username,
         String displayName,
-        String avatarUrl
+        String avatarUrl,
+        ChatMemberRole role
 ) {
+    public static ChatMemberResponse fromMember(ChatMemberEntity member) {
+        UserEntity user = member.getUser();
+
+        return new ChatMemberResponse(
+                user.getId(),
+                user.getUsername(),
+                user.getDisplayName(),
+                user.getAvatarUrl(),
+                member.getRole()
+        );
+    }
+
     public static ChatMemberResponse fromUser(UserEntity user) {
         return new ChatMemberResponse(
                 user.getId(),
                 user.getUsername(),
                 user.getDisplayName(),
-                user.getAvatarUrl()
+                user.getAvatarUrl(),
+                ChatMemberRole.MEMBER
         );
     }
 }

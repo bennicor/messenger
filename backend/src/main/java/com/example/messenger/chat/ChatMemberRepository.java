@@ -8,8 +8,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface ChatMemberRepository extends JpaRepository<ChatMemberEntity, UUID> {
-
     boolean existsByChatIdAndUserId(UUID chatId, UUID userId);
+
+    long countByChatId(UUID chatId);
 
     @EntityGraph(attributePaths = {"chat", "user", "lastReadMessage"})
     Optional<ChatMemberEntity> findByChatIdAndUserId(UUID chatId, UUID userId);

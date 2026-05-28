@@ -1,10 +1,13 @@
 export type ChatType = 'DIRECT' | 'GROUP';
 
+export type ChatMemberRole = 'OWNER' | 'ADMIN' | 'MEMBER';
+
 export type ChatMember = {
   id: string;
   username: string;
   displayName: string | null;
   avatarUrl: string | null;
+  role: ChatMemberRole;
 };
 
 export type Chat = {
@@ -62,11 +65,12 @@ export type TypingEvent = {
   typing: boolean;
 };
 
-export type ChatListEventType = 'UPDATED';
+export type ChatListEventType = 'UPDATED' | 'REMOVED';
 
 export type ChatListEvent = {
   type: ChatListEventType;
-  chat: Chat;
+  chat: Chat | null;
+  chatId: string;
 };
 
 export type CreateGroupChatRequest = {

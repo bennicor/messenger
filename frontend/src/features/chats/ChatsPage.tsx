@@ -9,7 +9,7 @@ import type { UserSummary } from '@/features/auth/authTypes';
 import { createRealtimeClient } from '@/features/chats/api/realtimeClient';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
-import { Check, Pencil, Trash2, Users, X } from 'lucide-react';
+import { Check, LogOut, Pencil, Trash2, Users, X } from 'lucide-react';
 
 import type {
   Chat,
@@ -26,6 +26,7 @@ import {
   deleteMessage,
   getChats,
   getMessages,
+  leaveGroupChat,
   markChatAsRead,
   updateMessage
 } from '@/features/chats/api/chatsApi';
@@ -78,6 +79,8 @@ export function ChatsPage() {
   const [groupTitle, setGroupTitle] = useState('');
   const [selectedGroupMemberIds, setSelectedGroupMemberIds] = useState<string[]>([]);
 
+  const [isChatInfoOpen, setIsChatInfoOpen] = useState(false);
+
   const rawSearch = search.trim();
   const debouncedSearch = useDebouncedValue(search, 300).trim();
 
@@ -87,16 +90,30 @@ export function ChatsPage() {
 
   const applyChatListEvent = useCallback(
     (event: ChatListEvent) => {
-      if (event.type !== 'UPDATED') {
+      if (event.type === 'REMOVED') {
+        queryClient.setQueryData<Chat[]>(['chats'], (oldChats = []) =>
+          oldChats.filter((chat) => chat.id !== event.chatId)
+        );
+
+        if (selectedChatId === event.chatId) {
+          setSelectedChatId(null);
+        }
+
         return;
       }
 
-      queryClient.setQueryData<Chat[]>(['chats'], (oldChats = []) => {
-        const exists = oldChats.some((chat) => chat.id === event.chat.id);
+      if (event.type !== 'UPDATED' || event.chat === null) {
+        return;
+      }
 
-        const nextChats = exists
-          ? oldChats.map((chat) => (chat.id === event.chat.id ? event.chat : chat))
-          : [event.chat, ...oldChats];
+      const updatedChat = event.chat;
+
+      queryClient.setQueryData<Chat[]>(['chats'], (oldChats = []) => {
+        const exists = oldChats.some((chat) => chat.id === updatedChat.id);
+
+        const nextChats: Chat[] = exists
+          ? oldChats.map((chat) => (chat.id === updatedChat.id ? updatedChat : chat))
+          : [updatedChat, ...oldChats];
 
         return nextChats.sort((a, b) => {
           const aTime = a.lastMessage?.createdAt ?? a.updatedAt;
@@ -106,7 +123,7 @@ export function ChatsPage() {
         });
       });
     },
-    [queryClient]
+    [queryClient, selectedChatId]
   );
 
   function appendMessageToInfiniteData(
@@ -413,7 +430,8 @@ export function ChatsPage() {
     onSuccess: (chat) => {
       applyChatListEvent({
         type: 'UPDATED',
-        chat
+        chat,
+        chatId: chat.id
       });
 
       selectChat(chat);
@@ -479,6 +497,29 @@ export function ChatsPage() {
         type: 'DELETED',
         message
       });
+    }
+  });
+
+  const leaveGroupChatMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedChatId) {
+        throw new Error('Chat is not selected');
+      }
+
+      return leaveGroupChat(selectedChatId);
+    },
+    onSuccess: () => {
+      if (!selectedChatId) {
+        return;
+      }
+
+      applyChatListEvent({
+        type: 'REMOVED',
+        chat: null,
+        chatId: selectedChatId
+      });
+
+      setIsChatInfoOpen(false);
     }
   });
 
@@ -1041,13 +1082,79 @@ export function ChatsPage() {
       <section className="chat-workspace">
         {selectedChat ? (
           <>
-            <header className="chat-header">
-              <div>
-                <p className="eyebrow">Direct Messages</p>
-                <h1>{selectedChatTitle}</h1>
-                <p className="muted">{getChatSubtitle(selectedChat)}</p>
+          <header className="chat-header">
+            <div>
+              <p className="eyebrow">
+                {selectedChat.type === 'GROUP' ? 'Group chat' : 'Direct chat'}
+              </p>
+              <h1>{selectedChatTitle}</h1>
+              <p className="muted">{getChatSubtitle(selectedChat)}</p>
+            </div>
+
+            {selectedChat.type === 'GROUP' ? (
+              <button
+                type="button"
+                className="chat-info-button"
+                onClick={() => setIsChatInfoOpen((isOpen) => !isOpen)}
+              >
+                <Users size={17} />
+                Участники
+              </button>
+            ) : null}
+          </header>
+
+          {isChatInfoOpen && selectedChat.type === 'GROUP' ? (
+            <section className="chat-info-panel">
+              <div className="chat-info-header">
+                <div>
+                  <h2>Участники</h2>
+                  <p className="muted">{selectedChat.members.length} участников</p>
+                </div>
+
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setIsChatInfoOpen(false)}
+                  aria-label="Закрыть"
+                >
+                  <X size={15} />
+                </button>
               </div>
-            </header>
+
+              <div className="member-list">
+                {selectedChat.members.map((member) => (
+                  <div key={member.id} className="member-card">
+                    <div className="avatar">
+                      {(member.displayName ?? member.username).slice(0, 1).toUpperCase()}
+                    </div>
+
+                    <div>
+                      <strong>{member.displayName ?? member.username}</strong>
+                      <span>@{member.username}</span>
+                    </div>
+
+                    <span className="member-role">
+                      {member.role === 'OWNER'
+                        ? 'Владелец'
+                        : member.role === 'ADMIN'
+                          ? 'Админ'
+                          : 'Участник'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="leave-group-button"
+                disabled={leaveGroupChatMutation.isPending}
+                onClick={() => leaveGroupChatMutation.mutate()}
+              >
+                <LogOut size={16} />
+                {leaveGroupChatMutation.isPending ? 'Выходим...' : 'Выйти из группы'}
+              </button>
+            </section>
+          ) : null}
 
             <div
               ref={messagesPanelRef}

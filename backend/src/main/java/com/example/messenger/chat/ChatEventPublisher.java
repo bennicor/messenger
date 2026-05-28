@@ -17,7 +17,14 @@ public class ChatEventPublisher {
     public void publishChatUpdated(UUID userId, ChatResponse chat) {
         messagingTemplate.convertAndSend(
                 "/topic/users/" + userId + "/chats/events",
-                new ChatListEventResponse(ChatListEventType.UPDATED, chat)
+                ChatListEventResponse.updated(chat)
+        );
+    }
+
+    public void publishChatRemoved(UUID userId, UUID chatId) {
+        messagingTemplate.convertAndSend(
+                "/topic/users/" + userId + "/chats/events",
+                ChatListEventResponse.removed(chatId)
         );
     }
 }

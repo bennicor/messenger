@@ -63,4 +63,13 @@ public class ChatController {
                 request
         );
     }
+
+    @DeleteMapping("/{chatId}/members/me")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void leaveGroupChat(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID chatId
+    ) {
+        chatService.leaveGroupChat(chatId, principal.getId());
+    }
 }

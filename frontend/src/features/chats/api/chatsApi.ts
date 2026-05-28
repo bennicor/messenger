@@ -66,3 +66,7 @@ export async function createGroupChat(request: CreateGroupChatRequest): Promise<
   const response = await http.post<Chat>('/chats/group', request);
   return response.data;
 }
+
+export async function leaveGroupChat(chatId: string): Promise<void> {
+  await http.delete(`/chats/${chatId}/members/me`);
+}

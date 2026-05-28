@@ -8,8 +8,8 @@ import org.springframework.transaction.annotation.Transactional;
 import com.example.messenger.message.MessageEntity;
 import com.example.messenger.message.MessageRepository;
 import com.example.messenger.message.MessageResponse;
-import java.time.Instant;
 
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -176,15 +176,41 @@ public class ChatService {
         return savedChat;
     }
 
+    @Transactional
+    public void leaveGroupChat(UUID chatId, UUID currentUserId) {
+        ChatMemberEntity membership = chatMemberRepository.findByChatIdAndUserId(chatId, currentUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Chat not found"));
+
+        ChatEntity chat = membership.getChat();
+
+        if (chat.getType() != ChatType.GROUP) {
+            throw new IllegalArgumentException("You can leave only group chats");
+        }
+
+        long membersCount = chatMemberRepository.countByChatId(chatId);
+
+        if (membership.getRole() == ChatMemberRole.OWNER && membersCount > 1) {
+            throw new IllegalArgumentException("Owner cannot leave group while other members exist");
+        }
+
+        chatMemberRepository.delete(membership);
+
+        publishChatRemovedForUser(currentUserId, chatId);
+        publishChatToMembers(chat);
+    }
+
     @Transactional(readOnly = true)
     public ChatResponse toResponse(ChatEntity chat, UUID currentUserId) {
         List<ChatMemberResponse> members = chatMemberRepository.findAllByChatId(chat.getId())
-            .stream()
-            .map(ChatMemberEntity::getUser)
-            .sorted(Comparator.comparing(UserEntity::getUsername))
-            .filter(user -> shouldIncludeMember(chat.getType(), user.getId(), currentUserId))
-            .map(ChatMemberResponse::fromUser)
-            .toList();
+                .stream()
+                .sorted(Comparator.comparing(member -> member.getUser().getUsername()))
+                .filter(member -> shouldIncludeMember(
+                        chat.getType(),
+                        member.getUser().getId(),
+                        currentUserId
+                ))
+                .map(ChatMemberResponse::fromMember)
+                .toList();
 
         MessageResponse lastMessage = messageRepository
                 .findFirstByChatIdAndDeletedAtIsNullOrderByCreatedAtDesc(chat.getId())
@@ -268,5 +294,9 @@ public class ChatService {
 
             chatEventPublisher.publishChatUpdated(userId, chatResponse);
         }
+    }
+
+    private void publishChatRemovedForUser(UUID userId, UUID chatId) {
+        chatEventPublisher.publishChatRemoved(userId, chatId);
     }
 }
