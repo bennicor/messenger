@@ -10,6 +10,7 @@ import { createRealtimeClient } from '@/features/chats/api/realtimeClient';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
 import { Check, LogOut, Pencil, Plus, Trash2, Users, X } from 'lucide-react';
+import { VoiceCallPanel } from '@/features/voice/VoiceCallPanel';
 
 import type {
   Chat,
@@ -1187,6 +1188,10 @@ export function ChatsPage() {
               </button>
             ) : null}
           </header>
+
+          {currentUser ? (
+            <VoiceCallPanel chat={selectedChat} currentUser={currentUser} />
+          ) : null}
 
           {isChatInfoOpen && selectedChat.type === 'GROUP' ? (
             <section className="chat-info-panel">
