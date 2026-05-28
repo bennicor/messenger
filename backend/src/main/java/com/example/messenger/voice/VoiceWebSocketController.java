@@ -4,6 +4,7 @@ import com.example.messenger.chat.ChatMemberRepository;
 import com.example.messenger.security.UserPrincipal;
 import com.example.messenger.security.WebSocketUserPrincipal;
 import com.example.messenger.user.UserRepository;
+import com.example.messenger.chat.ChatMemberEntity;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.security.core.Authentication;
@@ -50,18 +51,25 @@ public class VoiceWebSocketController {
                 .map(user -> user.getUsername())
                 .orElse(currentUser.getPublicUsername());
 
-        voiceEventPublisher.publishVoiceSignal(
+        VoiceSignalResponse response = new VoiceSignalResponse(
                 chatId,
-                new VoiceSignalResponse(
-                        chatId,
-                        currentUser.getId(),
-                        username,
-                        request.toUserId(),
-                        request.type(),
-                        request.sdp(),
-                        request.candidate()
-                )
+                currentUser.getId(),
+                username,
+                request.toUserId(),
+                request.type(),
+                request.sdp(),
+                request.candidate()
         );
+
+        voiceEventPublisher.publishVoiceSignal(chatId, response);
+
+        if (
+                request.type() == VoiceSignalType.CALL_INVITE ||
+                request.type() == VoiceSignalType.CALL_DECLINE ||
+                request.type() == VoiceSignalType.CALL_ENDED
+        ) {
+            publishUserLevelCallSignals(chatId, currentUser.getId(), request, response);
+        }
     }
 
     private UserPrincipal extractUserPrincipal(Principal principal) {
@@ -75,5 +83,34 @@ public class VoiceWebSocketController {
         }
 
         throw new IllegalArgumentException("User is not authenticated");
+    }
+
+    private void publishUserLevelCallSignals(
+            UUID chatId,
+            UUID currentUserId,
+            VoiceSignalRequest request,
+            VoiceSignalResponse response
+    ) {
+        if (request.toUserId() != null) {
+            if (!request.toUserId().equals(currentUserId)) {
+                voiceEventPublisher.publishUserCallSignal(
+                        request.toUserId(),
+                        response
+                );
+            }
+
+            return;
+        }
+
+        for (ChatMemberEntity member : chatMemberRepository.findAllByChatId(chatId)) {
+            UUID memberUserId = member.getUser().getId();
+
+            if (!memberUserId.equals(currentUserId)) {
+                voiceEventPublisher.publishUserCallSignal(
+                        memberUserId,
+                        response
+                );
+            }
+        }
     }
 }

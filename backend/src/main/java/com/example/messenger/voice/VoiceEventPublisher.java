@@ -20,4 +20,11 @@ public class VoiceEventPublisher {
                 response
         );
     }
+
+    public void publishUserCallSignal(UUID userId, VoiceSignalResponse response) {
+        messagingTemplate.convertAndSend(
+                "/topic/users/" + userId + "/calls",
+                response
+        );
+    }
 }

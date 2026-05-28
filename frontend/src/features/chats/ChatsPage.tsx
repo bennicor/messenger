@@ -11,6 +11,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
 import { Check, LogOut, Pencil, Plus, Trash2, Users, X } from 'lucide-react';
 import { VoiceCallPanel } from '@/features/voice/VoiceCallPanel';
+import type { VoiceSignalResponse } from '@/features/voice/voiceTypes';
 
 import type {
   Chat,
@@ -85,6 +86,9 @@ export function ChatsPage() {
 
   const [memberSearch, setMemberSearch] = useState('');
   const [selectedNewMemberIds, setSelectedNewMemberIds] = useState<string[]>([]);
+
+  const [incomingCall, setIncomingCall] = useState<VoiceSignalResponse | null>(null);
+  const [autoStartVoiceChatId, setAutoStartVoiceChatId] = useState<string | null>(null);
 
   const rawSearch = search.trim();
   const debouncedSearch = useDebouncedValue(search, 300).trim();
@@ -359,6 +363,31 @@ export function ChatsPage() {
         client.subscribe(`/topic/users/${currentUser.id}/chats/events`, (frame: IMessage) => {
           const event = JSON.parse(frame.body) as ChatListEvent;
           applyChatListEvent(event);
+        });
+      }
+
+      if (currentUser?.id) {
+        client.subscribe(`/topic/users/${currentUser.id}/calls`, (frame: IMessage) => {
+          const signal = JSON.parse(frame.body) as VoiceSignalResponse;
+
+          if (signal.fromUserId === currentUser.id) {
+            return;
+          }
+
+          if (signal.toUserId && signal.toUserId !== currentUser.id) {
+            return;
+          }
+
+          if (signal.type === 'CALL_INVITE') {
+            setIncomingCall(signal);
+            return;
+          }
+
+          if (signal.type === 'CALL_ENDED' || signal.type === 'CALL_DECLINE') {
+            setIncomingCall((currentIncomingCall) =>
+              currentIncomingCall?.chatId === signal.chatId ? null : currentIncomingCall
+            );
+          }
         });
       }
 
@@ -808,6 +837,44 @@ export function ChatsPage() {
     return member?.displayName ?? member?.username ?? 'Личный чат';
   }
 
+  function acceptIncomingCall() {
+    if (!incomingCall) {
+      return;
+    }
+
+    const chat = chats.find((existingChat) => existingChat.id === incomingCall.chatId);
+
+    if (chat) {
+      selectChat(chat);
+    } else {
+      void queryClient.invalidateQueries({ queryKey: ['chats'] });
+      setSelectedChatId(incomingCall.chatId);
+    }
+
+    setAutoStartVoiceChatId(incomingCall.chatId);
+    setIncomingCall(null);
+  }
+
+  function declineIncomingCall() {
+    if (!incomingCall) {
+      return;
+    }
+
+    const client = stompClientRef.current;
+
+    if (client?.connected) {
+      client.publish({
+        destination: `/app/chats/${incomingCall.chatId}/voice`,
+        body: JSON.stringify({
+          type: 'CALL_DECLINE',
+          toUserId: incomingCall.fromUserId
+        })
+      });
+    }
+
+    setIncomingCall(null);
+  }
+
   function getChatSubtitle(chat: Chat): string {
     if (chat.type === 'GROUP') {
       return `${chat.members.length} участников`;
@@ -982,6 +1049,25 @@ export function ChatsPage() {
 
   return (
     <main className="app-shell">
+
+      {incomingCall ? (
+        <div className="global-call-banner">
+          <div>
+            <strong>Входящий звонок</strong>
+            <span>{incomingCall.fromUsername} звонит тебе</span>
+          </div>
+
+          <div className="global-call-actions">
+            <button type="button" onClick={acceptIncomingCall}>
+              Принять
+            </button>
+            <button type="button" className="decline" onClick={declineIncomingCall}>
+              Отклонить
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <aside className="sidebar">
         <div className="sidebar-header">
           <div>
@@ -1190,7 +1276,12 @@ export function ChatsPage() {
           </header>
 
           {currentUser ? (
-            <VoiceCallPanel chat={selectedChat} currentUser={currentUser} />
+            <VoiceCallPanel
+              chat={selectedChat}
+              currentUser={currentUser}
+              autoStart={autoStartVoiceChatId === selectedChat.id}
+              onAutoStartConsumed={() => setAutoStartVoiceChatId(null)}
+            />
           ) : null}
 
           {isChatInfoOpen && selectedChat.type === 'GROUP' ? (

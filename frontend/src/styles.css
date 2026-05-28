@@ -1244,3 +1244,87 @@ h1 {
     justify-content: flex-end;
   }
 }
+
+.global-call-banner {
+  position: fixed;
+  z-index: 100;
+  top: 1rem;
+  left: 50%;
+  width: min(34rem, calc(100% - 2rem));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid rgba(147, 197, 253, 0.45);
+  border-radius: 1.25rem;
+  padding: 0.95rem 1rem;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.34), transparent),
+    rgba(15, 23, 42, 0.98);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.52),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(18px);
+}
+
+.global-call-banner div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.global-call-banner strong {
+  color: #eff6ff;
+  font-size: 0.96rem;
+}
+
+.global-call-banner span {
+  overflow: hidden;
+  color: #bfdbfe;
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.global-call-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.global-call-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.68rem 0.95rem;
+  color: #020617;
+  background: #bfdbfe;
+  font-weight: 900;
+}
+
+.global-call-actions button.decline {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.58);
+}
+
+@media (max-width: 760px) {
+  .global-call-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .global-call-actions {
+    justify-content: flex-end;
+  }
+}
+
+.voice-start-button.join {
+  border-color: rgba(134, 239, 172, 0.55);
+  color: #ecfdf5;
+  background:
+    radial-gradient(circle at top left, rgba(187, 247, 208, 0.28), transparent 1.6rem),
+    linear-gradient(135deg, rgba(22, 163, 74, 0.94), rgba(21, 128, 61, 0.78));
+  box-shadow:
+    0 12px 28px rgba(22, 163, 74, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}

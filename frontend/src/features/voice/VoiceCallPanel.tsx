@@ -3,13 +3,15 @@ import type { IMessage, Client } from '@stomp/stompjs';
 import { Mic, MicOff, Phone, PhoneOff, Volume2 } from 'lucide-react';
 import { createRealtimeClient } from '@/features/chats/api/realtimeClient';
 import type { Chat } from '@/features/chats/api/chatTypes';
-import type { AuthUser } from '@/features/auth/authTypes';
+import type { User } from '@/features/auth/authTypes';
 import type { VoiceSignalRequest, VoiceSignalResponse } from './voiceTypes';
 import { useAuthStore } from '@/stores/authStore';
 
 type VoiceCallPanelProps = {
   chat: Chat;
-  currentUser: AuthUser;
+  currentUser: User;
+  autoStart?: boolean;
+  onAutoStartConsumed?: () => void;
 };
 
 const rtcConfiguration: RTCConfiguration = {
@@ -20,11 +22,22 @@ const rtcConfiguration: RTCConfiguration = {
   ]
 };
 
-export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
+export function VoiceCallPanel({
+  chat,
+  currentUser,
+  autoStart = false,
+  onAutoStartConsumed
+}: VoiceCallPanelProps) {
   const stompClientRef = useRef<Client | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
   const pendingCandidatesRef = useRef<Record<string, RTCIceCandidateInit[]>>({});
+
+  const soloLeaveTimerRef = useRef<number | null>(null);
+  const incomingCallTimeoutRef = useRef<number | null>(null);
+
+  const activeCallUsersRef = useRef<Record<string, string>>({});
+  const participantsRef = useRef<Record<string, string>>({});
 
   const [isInCall, setIsInCall] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -33,12 +46,115 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
   const [participants, setParticipants] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
+
+  const [isRemoteCallActive, setIsRemoteCallActive] = useState(false);
+  const [activeCallUsers, setActiveCallUsers] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    activeCallUsersRef.current = activeCallUsers;
+  }, [activeCallUsers]);
+
+  useEffect(() => {
+    participantsRef.current = participants;
+  }, [participants]);
+
+  useEffect(() => {
+    setIsRemoteCallActive(false);
+    setActiveCallUsers({});
+    setParticipants({});
+    setRemoteStreams({});
+    setError(null);
+    clearSoloLeaveTimer();
+  }, [chat.id]);
+
   useEffect(() => {
     return () => {
       void leaveCall();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.id]);
+
+  useEffect(() => {
+    if (!autoStart || isInCall || isConnecting) {
+      return;
+    }
+
+    onAutoStartConsumed?.();
+    void startCall(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart, isInCall, isConnecting]);
+
+  useEffect(() => {
+    const accessToken = useAuthStore.getState().accessToken;
+
+    if (!accessToken) {
+      return;
+    }
+
+    const client = createRealtimeClient(accessToken);
+    stompClientRef.current = client;
+
+    client.onConnect = () => {
+      client.subscribe(`/topic/chats/${chat.id}/voice`, (frame: IMessage) => {
+        const signal = JSON.parse(frame.body) as VoiceSignalResponse;
+        void handleVoiceSignal(signal);
+      });
+
+      publishSignal({
+        type: 'CALL_STATE_REQUEST'
+      });
+    };
+
+    client.onStompError = () => {
+      setError('Не удалось подключиться к голосовому чату.');
+    };
+
+    client.activate();
+
+    return () => {
+      clearSoloLeaveTimer();
+      void leaveCall(false);
+      void client.deactivate();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.id]);
+
+  function clearSoloLeaveTimer() {
+    if (soloLeaveTimerRef.current) {
+      window.clearTimeout(soloLeaveTimerRef.current);
+      soloLeaveTimerRef.current = null;
+    }
+  }
+
+  function clearIncomingCallTimeout() {
+    if (incomingCallTimeoutRef.current) {
+      window.clearTimeout(incomingCallTimeoutRef.current);
+      incomingCallTimeoutRef.current = null;
+    }
+  }
+
+  function scheduleSoloLeaveIfNeeded(nextParticipants?: Record<string, string>) {
+    const participantsToCheck = nextParticipants ?? participants;
+    const remoteCount = Object.keys(participantsToCheck).length;
+
+    clearSoloLeaveTimer();
+
+    if (!isInCall) {
+      return;
+    }
+
+    if (remoteCount > 0) {
+      return;
+    }
+
+    soloLeaveTimerRef.current = window.setTimeout(() => {
+      publishSignal({
+        type: 'CALL_ENDED'
+      });
+
+      void leaveCall(false);
+    }, 8000);
+  }
 
   function publishSignal(signal: VoiceSignalRequest) {
     const client = stompClientRef.current;
@@ -53,7 +169,7 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
     });
   }
 
-  async function startCall() {
+  async function startCall(shouldInvite = true) {
     if (isInCall || isConnecting) {
       return;
     }
@@ -62,12 +178,6 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
     setIsConnecting(true);
 
     try {
-      const accessToken = useAuthStore.getState().accessToken;
-
-      if (!accessToken) {
-        throw new Error('Нет access token');
-      }
-
       const localStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: false
@@ -75,33 +185,26 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
 
       localStreamRef.current = localStream;
 
-      const client = createRealtimeClient(accessToken);
-      stompClientRef.current = client;
+      setIsInCall(true);
+      setIsConnecting(false);
 
-      client.onConnect = () => {
-        client.subscribe(`/topic/chats/${chat.id}/voice`, (frame: IMessage) => {
-          const signal = JSON.parse(frame.body) as VoiceSignalResponse;
-          void handleVoiceSignal(signal);
-        });
+      setIsRemoteCallActive(true);
+      setActiveCallUsers((current) => ({
+        ...current,
+        [currentUser.id]: currentUser.username
+      }));
 
-        setIsInCall(true);
-        setIsConnecting(false);
+      publishSignal({
+        type: 'JOIN'
+      });
 
+      if (shouldInvite) {
         publishSignal({
-          type: 'JOIN'
+          type: 'CALL_INVITE'
         });
-      };
+      }
 
-      client.onWebSocketClose = () => {
-        setIsConnecting(false);
-      };
-
-      client.onStompError = () => {
-        setError('Не удалось подключиться к голосовому чату.');
-        setIsConnecting(false);
-      };
-
-      client.activate();
+      scheduleSoloLeaveIfNeeded({});
     } catch {
       setError('Не удалось получить доступ к микрофону.');
       setIsConnecting(false);
@@ -109,11 +212,29 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
     }
   }
 
-  async function leaveCall() {
+  async function leaveCall(
+    shouldNotifyCallEnded = true,
+    preserveRemoteGroupCall = false
+  ) {
+    clearSoloLeaveTimer();
+
+    const knownActiveUsers = {
+      ...activeCallUsersRef.current,
+      ...participantsRef.current
+    };
+
+    delete knownActiveUsers[currentUser.id];
+
     if (stompClientRef.current?.connected) {
       publishSignal({
         type: 'LEAVE'
       });
+
+      if (shouldNotifyCallEnded && chat.type === 'DIRECT') {
+        publishSignal({
+          type: 'CALL_ENDED'
+        });
+      }
     }
 
     Object.values(peersRef.current).forEach((peer) => peer.close());
@@ -122,18 +243,23 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
 
     stopLocalStream();
 
-    const client = stompClientRef.current;
-    stompClientRef.current = null;
-
-    if (client) {
-      await client.deactivate();
-    }
-
     setIsInCall(false);
     setIsConnecting(false);
     setIsMuted(false);
     setRemoteStreams({});
     setParticipants({});
+
+    if (
+      preserveRemoteGroupCall &&
+      chat.type === 'GROUP' &&
+      Object.keys(knownActiveUsers).length > 0
+    ) {
+      setActiveCallUsers(knownActiveUsers);
+      setIsRemoteCallActive(true);
+    } else {
+      setActiveCallUsers({});
+      setIsRemoteCallActive(false);
+    }
   }
 
   function stopLocalStream() {
@@ -146,15 +272,73 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
       return;
     }
 
+    if (signal.chatId !== chat.id) {
+      return;
+    }
+
     if (signal.toUserId && signal.toUserId !== currentUser.id) {
       return;
     }
 
-    if (signal.type === 'JOIN') {
-      setParticipants((current) => ({
+    if (signal.type === 'CALL_STATE_REQUEST') {
+      if (!isInCall) {
+        return;
+      }
+
+      publishSignal({
+        type: 'CALL_STATE_RESPONSE',
+        toUserId: signal.fromUserId
+      });
+
+      return;
+    }
+
+    if (signal.type === 'CALL_STATE_RESPONSE') {
+      setIsRemoteCallActive(true);
+
+      setActiveCallUsers((current) => ({
         ...current,
         [signal.fromUserId]: signal.fromUsername
       }));
+
+      return;
+    }
+
+    if (signal.type === 'CALL_DECLINE') {
+      if (signal.toUserId && signal.toUserId !== currentUser.id) {
+        return;
+      }
+
+      setError(`${signal.fromUsername} отклонил звонок.`);
+      void leaveCall(false);
+      return;
+    }
+
+    if (signal.type === 'CALL_ENDED') {
+      setIsRemoteCallActive(false);
+      setActiveCallUsers({});
+      void leaveCall(false);
+      return;
+    }
+
+    if (signal.type === 'JOIN') {
+      setIsRemoteCallActive(true);
+
+      setActiveCallUsers((current) => ({
+        ...current,
+        [signal.fromUserId]: signal.fromUsername
+      }));
+
+      setParticipants((current) => {
+        const next = {
+          ...current,
+          [signal.fromUserId]: signal.fromUsername
+        };
+
+        scheduleSoloLeaveIfNeeded(next);
+
+        return next;
+      });
 
       const peer = createPeerConnection(signal.fromUserId, signal.fromUsername);
 
@@ -172,6 +356,18 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
 
     if (signal.type === 'LEAVE') {
       closePeer(signal.fromUserId);
+
+      setActiveCallUsers((current) => {
+        const next = { ...current };
+        delete next[signal.fromUserId];
+
+        if (Object.keys(next).length === 0 && !isInCall) {
+          setIsRemoteCallActive(false);
+        }
+
+        return next;
+      });
+
       return;
     }
 
@@ -321,6 +517,20 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
     setParticipants((current) => {
       const next = { ...current };
       delete next[userId];
+
+      scheduleSoloLeaveIfNeeded(next);
+
+      return next;
+    });
+
+    setActiveCallUsers((current) => {
+      const next = { ...current };
+      delete next[userId];
+
+      if (Object.keys(next).length === 0 && !isInCall) {
+        setIsRemoteCallActive(false);
+      }
+
       return next;
     });
   }
@@ -351,7 +561,9 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
               ? participantNames.length > 0
                 ? `В звонке: ${participantNames.join(', ')}`
                 : 'Ты в звонке. Ждём участников.'
-              : 'Можно начать голосовой звонок в этом чате.'}
+              : isRemoteCallActive
+                ? `Звонок активен: ${Object.values(activeCallUsers).join(', ')}`
+                : 'Можно начать голосовой звонок в этом чате.'}
           </span>
         </div>
       </div>
@@ -371,7 +583,7 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
             <button
               type="button"
               className="voice-button danger"
-              onClick={() => void leaveCall()}
+              onClick={() => void leaveCall(true, chat.type === 'GROUP')}
               title="Выйти из звонка"
             >
               <PhoneOff size={17} />
@@ -380,12 +592,16 @@ export function VoiceCallPanel({ chat, currentUser }: VoiceCallPanelProps) {
         ) : (
           <button
             type="button"
-            className="voice-start-button"
+            className={isRemoteCallActive ? 'voice-start-button join' : 'voice-start-button'}
             disabled={isConnecting}
-            onClick={() => void startCall()}
+            onClick={() => void startCall(!isRemoteCallActive)}
           >
             <Phone size={17} />
-            {isConnecting ? 'Подключаемся...' : 'Начать звонок'}
+            {isConnecting
+              ? 'Подключаемся...'
+              : isRemoteCallActive
+                ? 'Подключиться'
+                : 'Начать звонок'}
           </button>
         )}
       </div>

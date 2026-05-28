@@ -3,8 +3,13 @@ export type VoiceSignalType =
   | 'LEAVE'
   | 'OFFER'
   | 'ANSWER'
-  | 'ICE_CANDIDATE';
-
+  | 'ICE_CANDIDATE'
+  | 'CALL_INVITE'
+  | 'CALL_DECLINE'
+  | 'CALL_ENDED'
+  | 'CALL_STATE_REQUEST'
+  | 'CALL_STATE_RESPONSE';
+    
 export type VoiceSignalRequest = {
   type: VoiceSignalType;
   toUserId?: string | null;
