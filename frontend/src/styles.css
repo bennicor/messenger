@@ -449,3 +449,14 @@ button:disabled {
     max-width: 92%;
   }
 }
+
+.connection-status {
+  margin: 0.35rem 0 0;
+  color: #fbbf24;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.connection-status.online {
+  color: #86efac;
+}

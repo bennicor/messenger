@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { IMessage } from '@stomp/stompjs';
+import type { Client } from '@stomp/stompjs';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMe } from '@/features/auth/authApi';
 import { getUsers } from '@/features/auth/usersApi';
@@ -9,13 +11,15 @@ import {
   getChats,
   getMessages
 } from '@/features/chats/api/chatsApi';
-import type { Chat } from '@/features/chats/api/chatTypes';
+import { createRealtimeClient } from '@/features/chats/api/realtimeClient';
+import type { Chat, Message } from '@/features/chats/api/chatTypes';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useAuthStore } from '@/stores/authStore';
 
 export function ChatsPage() {
   const queryClient = useQueryClient();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const stompClientRef = useRef<Client | null>(null);
 
   const logout = useAuthStore((state) => state.logout);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -24,7 +28,8 @@ export function ChatsPage() {
 
   const [search, setSearch] = useState('');
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
-  const [messageText, setMessageText] = useState('');
+  const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
 
   const rawSearch = search.trim();
   const debouncedSearch = useDebouncedValue(search, 300).trim();
@@ -52,7 +57,8 @@ export function ChatsPage() {
     queryFn: () => getUsers(debouncedSearch),
     enabled: isAuthenticated && debouncedSearch.length > 0,
     retry: false,
-    staleTime: 30_000
+    staleTime: 30_000,
+    placeholderData: (previousData) => previousData
   });
 
   const messagesQuery = useQuery({
@@ -61,6 +67,62 @@ export function ChatsPage() {
     enabled: isAuthenticated && Boolean(selectedChatId),
     retry: false
   });
+
+  useEffect(() => {
+    const accessToken = useAuthStore.getState().accessToken;
+
+    if (!isAuthenticated || !accessToken || !selectedChatId) {
+      return;
+    }
+
+    setIsRealtimeConnected(false);
+
+    const client = createRealtimeClient(accessToken);
+    stompClientRef.current = client;
+
+    client.onConnect = () => {
+      setIsRealtimeConnected(true);
+
+      client.subscribe(`/topic/chats/${selectedChatId}/messages`, (frame: IMessage) => {
+        const message = JSON.parse(frame.body) as Message;
+
+        queryClient.setQueryData<Message[]>(
+          ['messages', selectedChatId],
+          (oldMessages = []) => {
+            const alreadyExists = oldMessages.some((oldMessage) => oldMessage.id === message.id);
+
+            if (alreadyExists) {
+              return oldMessages;
+            }
+
+            return [...oldMessages, message];
+          }
+        );
+
+        void queryClient.invalidateQueries({ queryKey: ['chats'] });
+      });
+    };
+
+    client.onDisconnect = () => {
+      setIsRealtimeConnected(false);
+    };
+
+    client.onStompError = () => {
+      setIsRealtimeConnected(false);
+    };
+
+    client.onWebSocketClose = () => {
+      setIsRealtimeConnected(false);
+    };
+
+    client.activate();
+
+    return () => {
+      setIsRealtimeConnected(false);
+      stompClientRef.current = null;
+      void client.deactivate();
+    };
+  }, [isAuthenticated, selectedChatId, queryClient]);
 
   const createDirectChatMutation = useMutation({
     mutationFn: createDirectChat,
@@ -81,12 +143,23 @@ export function ChatsPage() {
         content: messageText.trim()
       });
     },
-    onSuccess: async () => {
-      setMessageText('');
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['messages', selectedChatId] }),
-        queryClient.invalidateQueries({ queryKey: ['chats'] })
-      ]);
+    onSuccess: async (message) => {
+      clearCurrentMessageText();
+
+      queryClient.setQueryData<Message[]>(
+        ['messages', selectedChatId],
+        (oldMessages = []) => {
+          const alreadyExists = oldMessages.some((oldMessage) => oldMessage.id === message.id);
+
+          if (alreadyExists) {
+            return oldMessages;
+          }
+
+          return [...oldMessages, message];
+        }
+      );
+
+      await queryClient.invalidateQueries({ queryKey: ['chats'] });
     }
   });
 
@@ -116,11 +189,15 @@ export function ChatsPage() {
   const selectedChat = chats.find((chat) => chat.id === selectedChatId) ?? null;
   const messages = messagesQuery.data ?? [];
 
-  const users = canShowSearchState ? usersQuery.data ?? [] : [];
+  const messageText = selectedChatId ? messageDrafts[selectedChatId] ?? '' : '';
+
+  const users = hasSearch ? usersQuery.data ?? [] : [];
 
   const showSearchHint = !hasSearch;
+
   const showSearching =
     hasSearch &&
+    users.length === 0 &&
     (!isDebounceSettled || usersQuery.isFetching || usersQuery.isPending);
 
   const showEmptyState =
@@ -160,8 +237,45 @@ export function ChatsPage() {
     });
   }
 
+  function updateMessageText(value: string) {
+    if (!selectedChatId) {
+      return;
+    }
+
+    setMessageDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [selectedChatId]: value
+    }));
+  }
+
+  function clearCurrentMessageText() {
+    if (!selectedChatId) {
+      return;
+    }
+
+    setMessageDrafts((currentDrafts) => {
+      const nextDrafts = { ...currentDrafts };
+      delete nextDrafts[selectedChatId];
+      return nextDrafts;
+    });
+  }
+
   async function handleMessageSubmit() {
-    if (!canSendMessage || createMessageMutation.isPending) {
+    const content = messageText.trim();
+
+    if (!selectedChatId || !content || createMessageMutation.isPending) {
+      return;
+    }
+
+    const client = stompClientRef.current;
+
+    if (client?.connected) {
+      client.publish({
+        destination: `/app/chats/${selectedChatId}/messages`,
+        body: JSON.stringify({ content })
+      });
+
+      clearCurrentMessageText();
       return;
     }
 
@@ -281,6 +395,9 @@ export function ChatsPage() {
                 <p className="eyebrow">Direct Messages</p>
                 <h1>{selectedChatTitle}</h1>
                 <p className="muted">{getChatSubtitle(selectedChat)}</p>
+                <p className={isRealtimeConnected ? 'connection-status online' : 'connection-status'}>
+                  {isRealtimeConnected ? 'Realtime подключён' : 'Realtime подключается...'}
+                </p>
               </div>
             </header>
 
@@ -341,7 +458,7 @@ export function ChatsPage() {
                 type="text"
                 placeholder="Напиши сообщение..."
                 value={messageText}
-                onChange={(event) => setMessageText(event.target.value)}
+                onChange={(event) => updateMessageText(event.target.value)}
               />
 
               <button

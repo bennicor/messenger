@@ -13,9 +13,14 @@ import java.util.UUID;
 public class MessageController {
 
     private final MessageService messageService;
+    private final MessageEventPublisher messageEventPublisher;
 
-    public MessageController(MessageService messageService) {
+    public MessageController(
+            MessageService messageService,
+            MessageEventPublisher messageEventPublisher
+    ) {
         this.messageService = messageService;
+        this.messageEventPublisher = messageEventPublisher;
     }
 
     @GetMapping
@@ -33,10 +38,14 @@ public class MessageController {
             @PathVariable UUID chatId,
             @Valid @RequestBody CreateMessageRequest request
     ) {
-        return messageService.createMessage(
+        MessageResponse message = messageService.createMessage(
                 chatId,
                 principal.getId(),
                 request
         );
+
+        messageEventPublisher.publishMessageCreated(chatId, message);
+
+        return message;
     }
 }
