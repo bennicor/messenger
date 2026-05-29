@@ -877,7 +877,7 @@ export function ChatsPage() {
     hasMessageChanged;
 
   const selectedChatTitle = useMemo(() => {
-    return selectedChat ? getChatTitle(selectedChat) : 'Выбери чат';
+    return selectedChat ? getChatTitle(selectedChat) : 'Выберите чат';
   }, [selectedChat]);
 
   function getChatTitle(chat: Chat): string {
@@ -1195,7 +1195,7 @@ export function ChatsPage() {
             </div>
 
             <p className="muted group-hint">
-              Найди пользователей через поиск и выбери участников группы.
+              Найдите пользователей через поиск и выберите участников группы.
             </p>
           </div>
         ) : null}
@@ -1392,7 +1392,7 @@ export function ChatsPage() {
                   <div className="add-members-header">
                     <div>
                       <h3>Добавить участников</h3>
-                      <p className="muted">Найди пользователей и выбери одного или нескольких.</p>
+                      <p className="muted">Найдите пользователей и выберите одного или нескольких.</p>
                     </div>
                   </div>
 
@@ -1681,9 +1681,9 @@ export function ChatsPage() {
         ) : (
           <div className="chat-panel">
             <div className="chat-empty-state">
-              <h1>Выбери чат</h1>
+              <h1>Выберите чат</h1>
               <p className="muted">
-                Найди пользователя слева и создай личный чат.
+                Найдите пользователя слева и создай личный чат.
               </p>
             </div>
           </div>
