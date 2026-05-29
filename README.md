@@ -1,6 +1,6 @@
-# Messenger
+# Мессенджер с возможностью текстового и голосового общения
 
-Full-stack realtime messenger with:
+Стек используемых технологий:
 
 - Java 21
 - Spring Boot
@@ -13,7 +13,7 @@ Full-stack realtime messenger with:
 - Docker Compose
 - Nginx reverse proxy
 
-## Services
+## Сервисы
 
 | Service | URL |
 |---|---|
@@ -24,7 +24,7 @@ Full-stack realtime messenger with:
 | Backend health | http://localhost/api/health |
 | Actuator health | http://localhost/actuator/health |
 
-## Start
+## Запуск
 
 ```bash
 cp .env.example .env
