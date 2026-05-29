@@ -568,7 +568,7 @@ export function ChatsPage() {
   const createMessageMutation = useMutation({
     mutationFn: async () => {
       if (!selectedChatId) {
-        throw new Error('Chat is not selected');
+        throw new Error('Чат не выбран');
       }
 
       return createMessage(selectedChatId, {
@@ -590,7 +590,7 @@ export function ChatsPage() {
   const updateMessageMutation = useMutation({
     mutationFn: async () => {
       if (!selectedChatId || !editingMessageId) {
-        throw new Error('Message is not selected');
+        throw new Error('Сообщение не выбрано');
       }
 
       return updateMessage(selectedChatId, editingMessageId, {
@@ -1157,7 +1157,7 @@ export function ChatsPage() {
           Поиск пользователей
           <input
             type="search"
-            placeholder="Начни вводить username или email"
+            placeholder="Начните вводить никнейм или email"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
@@ -1202,7 +1202,7 @@ export function ChatsPage() {
 
         <div className="user-list">
           {showSearchHint ? (
-            <p className="muted">Начни вводить имя пользователя, чтобы найти человека.</p>
+            <p className="muted">Начните вводить никнейм, чтобы найти человека.</p>
           ) : null}
 
           {showSearching ? (
@@ -1309,7 +1309,7 @@ export function ChatsPage() {
           <header className="chat-header">
             <div>
               <p className="eyebrow">
-                {selectedChat.type === 'GROUP' ? 'Group chat' : 'Direct chat'}
+                {selectedChat.type === 'GROUP' ? 'Групповой чат' : 'Личный чат'}
               </p>
               <h1>{selectedChatTitle}</h1>
               <p className="muted">{getChatSubtitle(selectedChat)}</p>
@@ -1398,14 +1398,14 @@ export function ChatsPage() {
 
                   <input
                     type="search"
-                    placeholder="username или email"
+                    placeholder="Никнейм или email"
                     value={memberSearch}
                     onChange={(event) => setMemberSearch(event.target.value)}
                   />
 
                   <div className="add-members-results">
                     {memberSearch.trim().length === 0 ? (
-                      <p className="muted">Начни вводить имя пользователя.</p>
+                      <p className="muted">Начните вводить никнейм.</p>
                     ) : null}
 
                     {groupUsersQuery.isFetching && debouncedMemberSearch.length > 0 ? (

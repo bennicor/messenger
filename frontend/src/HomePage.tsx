@@ -5,7 +5,7 @@ export function HomePage() {
     <main className="page">
       <section className="card">
         <p className="eyebrow">Messenger</p>
-        <h1>Realtime chat and calls</h1>
+        <h1>Мессенджер</h1>
         <p className="muted">
           Full-stack мессенджер на Java, Spring Boot, React, WebSocket и WebRTC.
         </p>

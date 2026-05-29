@@ -28,7 +28,7 @@ export function LoginPage() {
       setAuth(response.accessToken, response.user);
       navigate(redirectTo, { replace: true });
     } catch {
-      setError('Не удалось войти. Проверь email и пароль.');
+      setError('Не удалось войти. Проверьте email и пароль.');
     } finally {
       setIsSubmitting(false);
     }
@@ -60,7 +60,7 @@ export function LoginPage() {
           </label>
 
           <label>
-            Password
+            Пароль
             <input
               type="password"
               name="password"

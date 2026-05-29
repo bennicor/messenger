@@ -49,7 +49,7 @@ export function RegisterPage() {
           }}
         >
           <label>
-            Username
+            Никнейм
             <input
               type="text"
               name="username"
@@ -75,7 +75,7 @@ export function RegisterPage() {
           </label>
 
           <label>
-            Password
+            Пароль
             <input
               type="password"
               name="password"
